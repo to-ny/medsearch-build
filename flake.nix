@@ -11,7 +11,7 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
         resourceLimit = cmd:
-          "ionice -c 3 nice -n 15 prlimit --as=4000000000 -- ${cmd}";
+          "ionice -c 3 nice -n 15 ${cmd}";
 
         # SAM v2 export — update these when a new version is published
         samVersion = "11798";
