@@ -11,13 +11,22 @@ SAM XML (FAMHP/AFMPS) → SQLite → HTML generator → Pagefind → static site
 ## Commands
 
 ```bash
-./fetch-sam.sh                # Download latest SAM XML export (needs network)
 nix build .#database          # SAM XML → SQLite
 nix build .#html              # SQLite → HTML pages
 nix build .#site              # HTML → HTML + search index
 nix build                     # Full pipeline
 nix develop                   # Dev shell with pinned tools
+nix run .#update-sam          # Check for new SAM version
 ```
+
+## Updating SAM data
+
+SAM version and hash are pinned in `flake.nix`. To update:
+
+1. Run `nix run .#update-sam` to check for a new version
+2. Update `samVersion` in `flake.nix`
+3. Set `samHash` to `""` and run `nix build .#database`
+4. Copy the correct hash from the error message into `samHash`
 
 ## Structure
 
