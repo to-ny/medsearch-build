@@ -1,35 +1,36 @@
 import { mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
-import type { Pool } from "pg";
+import { queryAll } from "../db";
 import {
   layout, esc, ml, label, badge, entityUrl,
   localized, infoRow, summaryCard, formatDate, section,
 } from "../html";
 
-export async function generateChapterIVPages(pool: Pool, dist: string) {
+export function generateChapterIVPages(dist: string) {
   console.log("\nGenerating Chapter IV pages...");
 
-  const { rows } = await pool.query(`
+  const rows = queryAll(`
     SELECT cp.chapter_name, cp.paragraph_name, cp.key_string,
       cp.process_type, cp.process_type_overrule, cp.paragraph_version,
       cp.modification_status, cp.start_date, cp.end_date,
-      (SELECT COALESCE(json_agg(json_build_object(
+      (SELECT COALESCE(json_group_array(json_object(
         'verseSeq', v.verse_seq, 'verseNum', v.verse_num,
         'verseSeqParent', v.verse_seq_parent, 'verseLevel', v.verse_level,
-        'text', v.text, 'requestType', v.request_type,
+        'text', json(v.text), 'requestType', v.request_type,
         'agreementTermQuantity', v.agreement_term_quantity,
         'agreementTermUnit', v.agreement_term_unit
-      ) ORDER BY v.verse_seq), '[]'::json)
+      )), '[]')
       FROM chapter_iv_verse v
-      WHERE v.chapter_name = cp.chapter_name AND v.paragraph_name = cp.paragraph_name) as verses,
-      (SELECT count(DISTINCT d.ampp_cti_extended)::int
+      WHERE v.chapter_name = cp.chapter_name AND v.paragraph_name = cp.paragraph_name
+      ORDER BY v.verse_seq) as verses,
+      (SELECT count(DISTINCT d.ampp_cti_extended)
        FROM dmpp_chapter_iv dc JOIN dmpp d ON d.code = dc.dmpp_code AND d.delivery_environment = dc.delivery_environment
        WHERE dc.chapter_name = cp.chapter_name AND dc.paragraph_name = cp.paragraph_name
-         AND (d.end_date IS NULL OR d.end_date > CURRENT_DATE)) as linked_products_count,
-      (SELECT COALESCE(json_agg(json_build_object(
-        'ctiExtended', sub.cti_extended, 'prescriptionName', sub.prescription_name,
+         AND (d.end_date IS NULL OR d.end_date > date('now'))) as linked_products_count,
+      (SELECT COALESCE(json_group_array(json_object(
+        'ctiExtended', sub.cti_extended, 'prescriptionName', json(sub.prescription_name),
         'packDisplayValue', sub.pack_display_value
-      )), '[]'::json)
+      )), '[]')
       FROM (
         SELECT ampp.cti_extended, ampp.prescription_name, ampp.pack_display_value
         FROM ampp
@@ -37,13 +38,13 @@ export async function generateChapterIVPages(pool: Pool, dist: string) {
           SELECT DISTINCT d.ampp_cti_extended FROM dmpp_chapter_iv dc
           JOIN dmpp d ON d.code = dc.dmpp_code AND d.delivery_environment = dc.delivery_environment
           WHERE dc.chapter_name = cp.chapter_name AND dc.paragraph_name = cp.paragraph_name
-            AND (d.end_date IS NULL OR d.end_date > CURRENT_DATE)
-        ) AND (ampp.end_date IS NULL OR ampp.end_date > CURRENT_DATE)
-        ORDER BY ampp.prescription_name->>'en'
+            AND (d.end_date IS NULL OR d.end_date > date('now'))
+        ) AND (ampp.end_date IS NULL OR ampp.end_date > date('now'))
+        ORDER BY json_extract(ampp.prescription_name, '$.en')
         LIMIT 20
       ) sub) as linked_products
     FROM chapter_iv_paragraph cp
-    WHERE cp.end_date IS NULL OR cp.end_date > CURRENT_DATE
+    WHERE cp.end_date IS NULL OR cp.end_date > date('now')
     ORDER BY cp.chapter_name, cp.paragraph_name`);
 
   for (const ch of rows) {

@@ -1,22 +1,22 @@
 import { mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
-import type { Pool } from "pg";
+import { queryAll } from "../db";
 import {
   layout, esc, label, badge, entityUrl,
   relationshipList, infoRow, summaryCard, section,
 } from "../html";
 
-export async function generateATCPages(pool: Pool, dist: string) {
+export function generateATCPages(dist: string) {
   console.log("\nGenerating ATC pages...");
   const dir = join(dist, "classifications");
   mkdirSync(dir, { recursive: true });
 
   // Fetch all ATC codes
-  const { rows } = await pool.query(`
+  const rows = queryAll(`
     SELECT atc.code, atc.description,
-      (SELECT COALESCE(json_agg(json_build_object(
+      (SELECT COALESCE(json_group_array(json_object(
         'code', child.code, 'description', child.description
-      ) ORDER BY child.code), '[]'::json)
+      )), '[]')
       FROM atc_classification child
       WHERE child.code LIKE atc.code || '%'
         AND length(child.code) = CASE
@@ -25,10 +25,11 @@ export async function generateATCPages(pool: Pool, dist: string) {
           WHEN length(atc.code) = 4 THEN 5
           WHEN length(atc.code) = 5 THEN 7
           ELSE 0
-        END) as children,
-      (SELECT count(DISTINCT ampp.cti_extended)::int FROM ampp
+        END
+      ORDER BY child.code) as children,
+      (SELECT COUNT(DISTINCT ampp.cti_extended) FROM ampp
        WHERE ampp.atc_code = atc.code
-         AND (ampp.end_date IS NULL OR ampp.end_date > CURRENT_DATE)) as package_count
+         AND (ampp.end_date IS NULL OR ampp.end_date > date('now'))) as package_count
     FROM atc_classification atc
     ORDER BY atc.code`);
 

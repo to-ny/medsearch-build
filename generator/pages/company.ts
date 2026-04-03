@@ -1,28 +1,29 @@
 import { mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
-import type { Pool } from "pg";
+import { queryAll } from "../db";
 import {
   layout, esc, ml, label, badge, slugify, entityUrl, localized,
   relationshipList, infoRow, summaryCard, formatDate, section,
 } from "../html";
 
-export async function generateCompanyPages(pool: Pool, dist: string) {
+export function generateCompanyPages(dist: string) {
   console.log("\nGenerating Company pages...");
   const dir = join(dist, "companies");
   mkdirSync(dir, { recursive: true });
 
-  const { rows } = await pool.query(`
+  const rows = queryAll(`
     SELECT c.actor_nr, c.denomination, c.legal_form, c.vat_country_code, c.vat_number,
       c.street_name, c.street_num, c.postbox, c.postcode, c.city, c.country_code,
       c.phone, c.language, c.start_date, c.end_date,
-      (SELECT count(*)::int FROM amp WHERE company_actor_nr = c.actor_nr
-        AND (end_date IS NULL OR end_date > CURRENT_DATE)) as product_count,
-      (SELECT COALESCE(json_agg(json_build_object(
-        'code', a.code, 'name', a.name
-      ) ORDER BY a.name->>'en'), '[]'::json)
+      (SELECT count(*) FROM amp WHERE company_actor_nr = c.actor_nr
+        AND (end_date IS NULL OR end_date > date('now'))) as product_count,
+      (SELECT COALESCE(json_group_array(json_object(
+        'code', a.code, 'name', json(a.name)
+      )), '[]')
       FROM amp a WHERE a.company_actor_nr = c.actor_nr
-        AND (a.end_date IS NULL OR a.end_date > CURRENT_DATE)) as products
-    FROM company c WHERE c.end_date IS NULL OR c.end_date > CURRENT_DATE
+        AND (a.end_date IS NULL OR a.end_date > date('now'))
+      ORDER BY json_extract(a.name, '$.en')) as products
+    FROM company c WHERE c.end_date IS NULL OR c.end_date > date('now')
     ORDER BY c.denomination`);
 
   for (const co of rows) {

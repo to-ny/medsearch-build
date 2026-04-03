@@ -1,51 +1,54 @@
 import { mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
-import type { Pool } from "pg";
+import { queryAll } from "../db";
 import {
   layout, esc, ml, label, badge, entitySlug, entityUrl, formatPrice,
   localized, relationshipList, infoRow, summaryCard, formatDate, section,
 } from "../html";
 
-export async function generateAMPPages(pool: Pool, dist: string) {
+export function generateAMPPages(dist: string) {
   console.log("\nGenerating AMP pages...");
   const dir = join(dist, "medications");
   mkdirSync(dir, { recursive: true });
 
-  const { rows } = await pool.query(`
+  const rows = queryAll(`
     SELECT a.code, a.name, a.abbreviated_name, a.official_name, a.vmp_code,
       a.company_actor_nr, a.black_triangle, a.medicine_type, a.status, a.start_date, a.end_date,
-      (SELECT json_build_object('code', vmp.code, 'name', vmp.name, 'vtmCode', vmp.vtm_code,
+      (SELECT json_object('code', vmp.code, 'name', json(vmp.name), 'vtmCode', vmp.vtm_code,
         'vtmName', (SELECT name FROM vtm WHERE vtm.code = vmp.vtm_code))
        FROM vmp WHERE vmp.code = a.vmp_code) as vmp,
-      (SELECT json_build_object('actorNr', c.actor_nr, 'denomination', c.denomination, 'city', c.city, 'countryCode', c.country_code)
+      (SELECT json_object('actorNr', c.actor_nr, 'denomination', c.denomination, 'city', c.city, 'countryCode', c.country_code)
        FROM company c WHERE c.actor_nr = a.company_actor_nr) as company,
-      (SELECT COALESCE(json_agg(json_build_object(
-        'substanceCode', i.substance_code, 'substanceName', s.name,
+      (SELECT COALESCE(json_group_array(json_object(
+        'substanceCode', i.substance_code, 'substanceName', json(s.name),
         'strengthValue', i.strength_value, 'strengthUnit', i.strength_unit, 'strengthDescription', i.strength_description
-      ) ORDER BY i.component_sequence_nr, i.rank), '[]'::json)
+      )), '[]')
       FROM amp_ingredient i LEFT JOIN substance s ON s.code = i.substance_code
-      WHERE i.amp_code = a.code) as ingredients,
-      (SELECT COALESCE(json_agg(json_build_object(
+      WHERE i.amp_code = a.code
+      ORDER BY i.component_sequence_nr, i.rank) as ingredients,
+      (SELECT COALESCE(json_group_array(json_object(
         'sequenceNr', ac.sequence_nr,
-        'formCode', ac.pharmaceutical_form_code, 'formName', pf.name,
-        'routeCode', ac.route_of_administration_code, 'routeName', ra.name
-      ) ORDER BY ac.sequence_nr), '[]'::json)
+        'formCode', ac.pharmaceutical_form_code, 'formName', json(pf.name),
+        'routeCode', ac.route_of_administration_code, 'routeName', json(ra.name)
+      )), '[]')
       FROM amp_component ac
       LEFT JOIN pharmaceutical_form pf ON pf.code = ac.pharmaceutical_form_code
       LEFT JOIN route_of_administration ra ON ra.code = ac.route_of_administration_code
-      WHERE ac.amp_code = a.code) as components,
-      (SELECT COALESCE(json_agg(json_build_object(
-        'ctiExtended', ampp.cti_extended, 'prescriptionName', ampp.prescription_name,
+      WHERE ac.amp_code = a.code
+      ORDER BY ac.sequence_nr) as components,
+      (SELECT COALESCE(json_group_array(json_object(
+        'ctiExtended', ampp.cti_extended, 'prescriptionName', json(ampp.prescription_name),
         'packDisplayValue', ampp.pack_display_value, 'status', ampp.status
-      ) ORDER BY ampp.prescription_name->>'en'), '[]'::json)
-      FROM ampp WHERE ampp.amp_code = a.code AND (ampp.end_date IS NULL OR ampp.end_date > CURRENT_DATE)) as packages,
+      )), '[]')
+      FROM ampp WHERE ampp.amp_code = a.code AND (ampp.end_date IS NULL OR ampp.end_date > date('now'))
+      ORDER BY json_extract(ampp.prescription_name, '$.en')) as packages,
       (SELECT MIN(d.price) FROM dmpp d JOIN ampp ON ampp.cti_extended = d.ampp_cti_extended
        WHERE ampp.amp_code = a.code AND d.price IS NOT NULL
-       AND (d.end_date IS NULL OR d.end_date > CURRENT_DATE) AND (ampp.end_date IS NULL OR ampp.end_date > CURRENT_DATE)) as min_price,
+       AND (d.end_date IS NULL OR d.end_date > date('now')) AND (ampp.end_date IS NULL OR ampp.end_date > date('now'))) as min_price,
       (SELECT MAX(d.price) FROM dmpp d JOIN ampp ON ampp.cti_extended = d.ampp_cti_extended
        WHERE ampp.amp_code = a.code AND d.price IS NOT NULL
-       AND (d.end_date IS NULL OR d.end_date > CURRENT_DATE) AND (ampp.end_date IS NULL OR ampp.end_date > CURRENT_DATE)) as max_price
-    FROM amp a WHERE a.end_date IS NULL OR a.end_date > CURRENT_DATE ORDER BY a.name->>'en'`);
+       AND (d.end_date IS NULL OR d.end_date > date('now')) AND (ampp.end_date IS NULL OR ampp.end_date > date('now'))) as max_price
+    FROM amp a WHERE a.end_date IS NULL OR a.end_date > date('now') ORDER BY json_extract(a.name, '$.en')`);
 
   for (const amp of rows) {
     const slug = entitySlug(amp.name, amp.code);

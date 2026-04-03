@@ -1,52 +1,53 @@
 import { mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
-import type { Pool } from "pg";
+import { queryAll } from "../db";
 import {
   layout, esc, ml, label, badge, entitySlug, entityUrl, formatPrice,
   localized, infoRow, summaryCard, formatDate, section,
 } from "../html";
 
-export async function generateAMPPPages(pool: Pool, dist: string) {
+export function generateAMPPPages(dist: string) {
   console.log("\nGenerating AMPP pages...");
   const dir = join(dist, "packages");
   mkdirSync(dir, { recursive: true });
 
   // Batch in chunks of 20K to manage memory
-  const countResult = await pool.query(
-    `SELECT count(*)::int as c FROM ampp WHERE end_date IS NULL OR end_date > CURRENT_DATE`
+  const countResult = queryAll(
+    `SELECT count(*) as c FROM ampp WHERE end_date IS NULL OR end_date > date('now')`
   );
-  const total = countResult.rows[0].c;
+  const total = countResult[0].c;
   const CHUNK = 20000;
   let generated = 0;
 
   for (let offset = 0; offset < total; offset += CHUNK) {
-    const { rows } = await pool.query(`
+    const rows = queryAll(`
       SELECT p.cti_extended, p.amp_code, p.prescription_name, p.authorisation_nr,
         p.orphan, p.pack_display_value, p.status, p.ex_factory_price, p.atc_code,
         p.start_date, p.end_date, p.leaflet_url, p.spc_url,
-        (SELECT json_build_object('code', a.code, 'name', a.name, 'companyActorNr', a.company_actor_nr,
+        (SELECT json_object('code', a.code, 'name', json(a.name), 'companyActorNr', a.company_actor_nr,
           'companyName', (SELECT denomination FROM company WHERE actor_nr = a.company_actor_nr))
          FROM amp a WHERE a.code = p.amp_code) as amp,
-        (SELECT json_build_object('code', atc.code, 'description', atc.description)
+        (SELECT json_object('code', atc.code, 'description', atc.description)
          FROM atc_classification atc WHERE atc.code = p.atc_code) as atc,
-        (SELECT COALESCE(json_agg(json_build_object(
+        (SELECT COALESCE(json_group_array(json_object(
           'code', d.code, 'deliveryEnvironment', d.delivery_environment,
           'price', d.price, 'cheap', d.cheap, 'cheapest', d.cheapest, 'reimbursable', d.reimbursable
-        ) ORDER BY d.delivery_environment, d.code), '[]'::json)
+        )), '[]')
         FROM dmpp d WHERE d.ampp_cti_extended = p.cti_extended
-          AND (d.end_date IS NULL OR d.end_date > CURRENT_DATE)) as cnk_codes,
-        (SELECT COALESCE(json_agg(json_build_object(
+          AND (d.end_date IS NULL OR d.end_date > date('now'))
+        ORDER BY d.delivery_environment, d.code) as cnk_codes,
+        (SELECT COALESCE(json_group_array(json_object(
           'chapterName', dc.chapter_name, 'paragraphName', dc.paragraph_name,
-          'keyString', cp.key_string
-        )), '[]'::json)
+          'keyString', json(cp.key_string)
+        )), '[]')
         FROM dmpp_chapter_iv dc
         JOIN chapter_iv_paragraph cp ON cp.chapter_name = dc.chapter_name AND cp.paragraph_name = dc.paragraph_name
         JOIN dmpp d ON d.code = dc.dmpp_code AND d.delivery_environment = dc.delivery_environment
         WHERE d.ampp_cti_extended = p.cti_extended
-          AND (d.end_date IS NULL OR d.end_date > CURRENT_DATE)) as chapter_iv
+          AND (d.end_date IS NULL OR d.end_date > date('now'))) as chapter_iv
       FROM ampp p
-      WHERE p.end_date IS NULL OR p.end_date > CURRENT_DATE
-      ORDER BY p.prescription_name->>'en', p.cti_extended
+      WHERE p.end_date IS NULL OR p.end_date > date('now')
+      ORDER BY json_extract(p.prescription_name, '$.en'), p.cti_extended
       LIMIT ${CHUNK} OFFSET ${offset}`);
 
     for (const ampp of rows) {

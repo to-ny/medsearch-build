@@ -1,26 +1,27 @@
 import { mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
-import type { Pool } from "pg";
+import { queryAll } from "../db";
 import {
   layout, esc, ml, label, badge, entitySlug, entityUrl,
   localized, relationshipList, infoRow, summaryCard, formatDate, section,
 } from "../html";
 
-export async function generateVMPGroupPages(pool: Pool, dist: string) {
+export function generateVMPGroupPages(dist: string) {
   console.log("\nGenerating VMP Group pages...");
   const dir = join(dist, "therapeutic-groups");
   mkdirSync(dir, { recursive: true });
 
-  const { rows } = await pool.query(`
+  const rows = queryAll(`
     SELECT vg.code, vg.name, vg.no_generic_prescription_reason, vg.no_switch_reason,
       vg.patient_frailty_indicator, vg.start_date, vg.end_date,
-      (SELECT COALESCE(json_agg(json_build_object(
-        'code', vmp.code, 'name', vmp.name, 'status', vmp.status
-      ) ORDER BY vmp.name->>'en'), '[]'::json)
+      (SELECT COALESCE(json_group_array(json_object(
+        'code', vmp.code, 'name', json(vmp.name), 'status', vmp.status
+      )), '[]')
       FROM vmp WHERE vmp.vmp_group_code = vg.code
-        AND (vmp.end_date IS NULL OR vmp.end_date > CURRENT_DATE)) as vmps
-    FROM vmp_group vg WHERE vg.end_date IS NULL OR vg.end_date > CURRENT_DATE
-    ORDER BY vg.name->>'en'`);
+        AND (vmp.end_date IS NULL OR vmp.end_date > date('now'))
+      ORDER BY json_extract(vmp.name, '$.en')) as vmps
+    FROM vmp_group vg WHERE vg.end_date IS NULL OR vg.end_date > date('now')
+    ORDER BY json_extract(vg.name, '$.en')`);
 
   for (const vg of rows) {
     const slug = entitySlug(vg.name, vg.code);

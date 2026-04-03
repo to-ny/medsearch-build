@@ -2,7 +2,7 @@
 /**
  * Sync SAM Database
  *
- * Downloads and imports SAM XML exports into PostgreSQL database.
+ * Downloads and imports SAM XML exports into SQLite database.
  * Uses upsert + mark-and-sweep pattern for efficient incremental updates
  * without the storage overhead of staging tables.
  *
@@ -18,7 +18,7 @@
  *   --skip-download   Use existing XML files (for testing)
  *
  * Required environment:
- *   DATABASE_URL      PostgreSQL connection string
+ *   DB_PATH           SQLite database file path (default: data/medsearch.sqlite)
  */
 
 import { createReadStream, existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, unlinkSync } from 'fs';
@@ -104,7 +104,7 @@ const CONFIG = {
 // ============================================================================
 
 interface ProgressState {
-  phase: 'download' | 'migrate' | 'import' | 'sweep' | 'search' | 'done';
+  phase: 'download' | 'migrate' | 'import' | 'sweep' | 'done';
   startedAt: string;
   lastUpdated: string;
   filesDownloaded: string[];
@@ -125,9 +125,8 @@ interface ParsedRecord {
 const validDmppCodes = new Set<string>();
 
 // Database connection (lazy loaded)
-import { Pool, type PoolClient } from 'pg';
-let dbClient: PoolClient | null = null;
-let dbPool: Pool | null = null;
+import { Database } from 'bun:sqlite';
+let db: Database | null = null;
 
 // Current sync ID for mark-and-sweep
 let currentSyncId: number;
@@ -136,66 +135,43 @@ let currentSyncId: number;
 // Database helpers
 // ============================================================================
 
-function getPool(): Pool {
-  if (!dbPool) {
-    dbPool = new Pool({ connectionString: process.env.DATABASE_URL });
-  }
-  return dbPool;
-}
-
-async function getDbClient(): Promise<PoolClient> {
-  if (!dbClient) {
-    dbClient = await getPool().connect();
-  }
-  return dbClient;
-}
-
-async function reconnectDbClient(): Promise<PoolClient> {
-  // Release old connection if it exists
-  if (dbClient) {
-    try {
-      dbClient.release();
-    } catch {
-      // Connection might already be broken
+function getDb(): Database {
+  if (!db) {
+    const dbPath = process.env.DB_PATH || 'data/medsearch.sqlite';
+    const dir = dirname(dbPath);
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true });
     }
-    dbClient = null;
+    db = new Database(dbPath);
+    db.exec("PRAGMA journal_mode = WAL");
+    db.exec("PRAGMA synchronous = NORMAL");
+    db.exec("PRAGMA foreign_keys = ON");
+    db.exec("PRAGMA cache_size = -64000"); // 64MB cache
   }
-  // Get a fresh connection
-  dbClient = await getPool().connect();
-  return dbClient;
+  return db;
 }
 
-async function query(text: string, params?: unknown[]) {
-  const client = await getDbClient();
-  return client.query(text, params);
+function query(text: string, params?: unknown[]) {
+  const stmt = getDb().prepare(text);
+  if (text.trimStart().toUpperCase().startsWith('SELECT') || text.trimStart().toUpperCase().startsWith('WITH')) {
+    return { rows: params ? stmt.all(...params) : stmt.all() };
+  }
+  const result = params ? stmt.run(...params) : stmt.run();
+  return { rows: [], rowCount: result.changes };
 }
 
-async function queryWithRetry(text: string, params?: unknown[], maxRetries = 3) {
-  let lastError: Error | null = null;
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    try {
-      const client = await getDbClient();
-      return await client.query(text, params);
-    } catch (error) {
-      lastError = error as Error;
-      const errorMessage = String(error);
+function queryWithRetry(text: string, params?: unknown[]) {
+  return query(text, params);
+}
 
-      // Check if this is a connection error that we should retry
-      if (errorMessage.includes('connection error') ||
-          errorMessage.includes('not queryable') ||
-          errorMessage.includes('ECONNRESET') ||
-          errorMessage.includes('ETIMEDOUT')) {
-        console.log(`   [WARN] Connection error, reconnecting (attempt ${attempt + 1}/${maxRetries})...`);
-        await new Promise(r => setTimeout(r, 1000 * (attempt + 1))); // Exponential backoff
-        await reconnectDbClient();
-        continue;
-      }
-
-      // Non-connection error, don't retry
-      throw error;
-    }
+/**
+ * Check if a column exists on a table, add it if not
+ */
+function addColumnIfNotExists(table: string, column: string, type: string) {
+  const info = getDb().prepare(`PRAGMA table_info(${table})`).all() as any[];
+  if (!info.some((c: any) => c.name === column)) {
+    getDb().exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
   }
-  throw lastError;
 }
 
 // ============================================================================
@@ -709,7 +685,7 @@ function getCurrentData(element: XmlElement): XmlElement | undefined {
 }
 
 /**
- * Extract multilingual text from element (returns JSONB format)
+ * Extract multilingual text from element (returns JSON format)
  * Handles multiple formats:
  * - <Fr>text</Fr>, <Nl>text</Nl> (no namespace)
  * - <ns2:Fr>text</ns2:Fr>, <ns2:Nl>text</ns2:Nl> (with namespace)
@@ -1072,7 +1048,7 @@ function transformReimbursementContext(element: XmlElement): ParsedRecord[] {
     data: {
       dmpp_code: dmppCode,
       delivery_environment: deliveryEnv,
-      legal_reference_path: legalRefPath || null,
+      legal_reference_path: legalRefPath || '',
       reimbursement_criterion_category: category || null,
       reimbursement_criterion_code: criterionCode || null,
       temporary: getChild(data, 'Temporary')?.text === 'true',
@@ -1393,8 +1369,7 @@ const UPSERT_CONFLICT_TARGETS: Record<string, string> = {
   chapter_iv_paragraph: 'chapter_name, paragraph_name',
   dmpp_chapter_iv: 'dmpp_code, delivery_environment, chapter_name, paragraph_name',
   legal_basis: 'key',
-  // For tables with SERIAL PKs, use the unique index for conflict target
-  reimbursement_context: 'dmpp_code, delivery_environment, COALESCE(legal_reference_path, \'\')',
+  reimbursement_context: 'dmpp_code, delivery_environment, legal_reference_path',
   legal_reference: 'legal_basis_key, path',
   legal_text: 'legal_basis_key, legal_reference_path, key',
 };
@@ -1426,28 +1401,11 @@ function validateAllTablesHaveData(): string[] {
   return missing;
 }
 
-async function ensureExtensions(dryRun: boolean): Promise<void> {
-  if (dryRun) {
-    console.log('   [DRY RUN] Would ensure pg_trgm extension exists');
-    return;
-  }
-
-  try {
-    await queryWithRetry('CREATE EXTENSION IF NOT EXISTS pg_trgm');
-    console.log('   [OK] pg_trgm extension ready');
-  } catch (error) {
-    console.log(`   [WARN] Could not create pg_trgm extension: ${error}`);
-  }
-}
-
 /**
  * Ensure sync_id columns exist on all data tables (idempotent migration)
  */
-async function ensureSyncIdColumns(dryRun: boolean): Promise<void> {
+function ensureSyncIdColumns(dryRun: boolean): void {
   console.log('\n2. Ensuring sync_id columns exist...\n');
-
-  // Ensure required extensions exist
-  await ensureExtensions(dryRun);
 
   const tables = [
     'substance', 'atc_classification', 'pharmaceutical_form', 'route_of_administration',
@@ -1463,7 +1421,7 @@ async function ensureSyncIdColumns(dryRun: boolean): Promise<void> {
 
   for (const table of tables) {
     try {
-      await query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS sync_id INTEGER`);
+      addColumnIfNotExists(table, 'sync_id', 'INTEGER');
     } catch (error) {
       // Table might not exist yet, that's okay - schema.sql will create it
       console.log(`   [WARN] Could not add sync_id to ${table}: ${error}`);
@@ -1472,21 +1430,21 @@ async function ensureSyncIdColumns(dryRun: boolean): Promise<void> {
 
   // Also ensure unique constraints exist for upsert conflict targets
   try {
-    await query(`
+    getDb().exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS uq_reimbursement_natural
-      ON reimbursement_context (dmpp_code, delivery_environment, COALESCE(legal_reference_path, ''))
+      ON reimbursement_context (dmpp_code, delivery_environment, legal_reference_path)
     `);
   } catch { /* Index might already exist */ }
 
   try {
-    await query(`
+    getDb().exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS uq_legal_reference_natural
       ON legal_reference (legal_basis_key, path)
     `);
   } catch { /* Index might already exist */ }
 
   try {
-    await query(`
+    getDb().exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS uq_legal_text_natural
       ON legal_text (legal_basis_key, legal_reference_path, key)
     `);
@@ -1504,11 +1462,11 @@ function buildBatchedUpsertQuery(table: string, columns: string[], rowCount: num
     throw new Error(`No conflict target defined for table: ${table}`);
   }
 
-  // Build VALUE placeholders for multiple rows: ($1, $2, $3), ($4, $5, $6), ...
+  // Build VALUE placeholders for multiple rows: (?, ?, ?), (?, ?, ?), ...
   const colCount = columns.length;
   const valueClauses: string[] = [];
   for (let row = 0; row < rowCount; row++) {
-    const rowPlaceholders = columns.map((_, col) => `$${row * colCount + col + 1}`).join(', ');
+    const rowPlaceholders = columns.map(() => '?').join(', ');
     valueClauses.push(`(${rowPlaceholders})`);
   }
 
@@ -1571,15 +1529,10 @@ function getConflictKeyColumns(table: string): string[] {
   if (!conflictTarget) return [];
 
   // Parse the conflict target to extract column names
-  // Handle cases like: 'code', 'code, delivery_environment', 'COALESCE(legal_reference_path, '')'
   return conflictTarget
     .split(',')
     .map(part => {
       const trimmed = part.trim();
-      // Extract column name from COALESCE(col, '') patterns
-      const coalesceMatch = trimmed.match(/COALESCE\((\w+),/);
-      if (coalesceMatch) return coalesceMatch[1];
-      // Otherwise it's just a column name
       return trimmed;
     });
 }
@@ -1615,11 +1568,11 @@ function deduplicateBatch(records: ParsedRecord[], table: string): ParsedRecord[
   return Array.from(seen.values());
 }
 
-async function importRecords(
+function importRecords(
   records: ParsedRecord[],
   dryRun: boolean,
   verbose: boolean
-): Promise<Record<string, number>> {
+): Record<string, number> {
   const counts: Record<string, number> = {};
 
   // Group records by table
@@ -1678,7 +1631,7 @@ async function importRecords(
 
         try {
           const upsertSql = buildBatchedUpsertQuery(table, columns, batch.length);
-          await queryWithRetry(upsertSql, allValues);
+          queryWithRetry(upsertSql, allValues);
           successfulUpserts += batch.length;
         } catch (error) {
           // If batch fails, fall back to individual inserts to identify problematic records
@@ -1689,7 +1642,7 @@ async function importRecords(
             const values = columns.map(c => record.data[c]);
             try {
               const singleSql = buildBatchedUpsertQuery(table, columns, 1);
-              await queryWithRetry(singleSql, values);
+              queryWithRetry(singleSql, values);
               successfulUpserts++;
             } catch (innerError) {
               if (verbose) {
@@ -1715,7 +1668,7 @@ async function importRecords(
  * Populate dmpp_chapter_iv from reimbursement_context
  * This is a derived table - Chapter IV links are extracted from legal_reference_path
  */
-async function populateDmppChapterIV(dryRun: boolean): Promise<void> {
+function populateDmppChapterIV(dryRun: boolean): void {
   console.log('\n3b. Populating dmpp_chapter_iv...\n');
 
   if (dryRun) {
@@ -1724,31 +1677,46 @@ async function populateDmppChapterIV(dryRun: boolean): Promise<void> {
     return;
   }
 
-  const result = await queryWithRetry(`
+  // SQLite doesn't have regexp_match, so we use a different approach:
+  // Select all reimbursement contexts with Chapter IV paths and extract paragraph numbers in JS
+  const rows = query(`
+    SELECT DISTINCT dmpp_code, delivery_environment, legal_reference_path
+    FROM reimbursement_context
+    WHERE legal_reference_path LIKE '%-IV-%'
+  `).rows as any[];
+
+  let insertCount = 0;
+  const insertStmt = getDb().prepare(`
     INSERT INTO dmpp_chapter_iv (dmpp_code, delivery_environment, chapter_name, paragraph_name, sync_id)
-    SELECT DISTINCT
-      rc.dmpp_code,
-      rc.delivery_environment,
-      'IV',
-      (regexp_match(rc.legal_reference_path, '-IV-(\\d+)$'))[1],
-      $1::INTEGER
-    FROM reimbursement_context rc
-    WHERE rc.legal_reference_path ~ '-IV-\\d+$'
-      AND (regexp_match(rc.legal_reference_path, '-IV-(\\d+)$'))[1] IS NOT NULL
+    VALUES (?, ?, ?, ?, ?)
     ON CONFLICT (dmpp_code, delivery_environment, chapter_name, paragraph_name)
     DO UPDATE SET sync_id = EXCLUDED.sync_id
-  `, [currentSyncId]);
+  `);
 
-  const rowCount = result.rowCount || 0;
+  getDb().exec('BEGIN');
+  try {
+    for (const row of rows) {
+      const match = row.legal_reference_path.match(/-IV-(\d+)$/);
+      if (match) {
+        insertStmt.run(row.dmpp_code, row.delivery_environment, 'IV', match[1], currentSyncId);
+        insertCount++;
+      }
+    }
+    getDb().exec('COMMIT');
+  } catch (error) {
+    getDb().exec('ROLLBACK');
+    throw error;
+  }
+
   tablesWithData.add('dmpp_chapter_iv');
-  console.log(`   [OK] Populated dmpp_chapter_iv (${rowCount} rows)`);
+  console.log(`   [OK] Populated dmpp_chapter_iv (${insertCount} rows)`);
 }
 
 /**
  * Delete records where sync_id != current sync_id (stale records)
  * Must delete children before parents to respect FK constraints
  */
-async function sweepStaleRecords(dryRun: boolean): Promise<void> {
+function sweepStaleRecords(dryRun: boolean): void {
   console.log('\n4. Sweeping stale records...\n');
 
   // Order matters for foreign key constraints - children first, then parents
@@ -1773,8 +1741,8 @@ async function sweepStaleRecords(dryRun: boolean): Promise<void> {
     }
 
     try {
-      const result = await queryWithRetry(
-        `DELETE FROM ${table} WHERE sync_id IS NULL OR sync_id != $1`,
+      const result = queryWithRetry(
+        `DELETE FROM ${table} WHERE sync_id IS NULL OR sync_id != ?`,
         [currentSyncId]
       );
       const deleted = result.rowCount || 0;
@@ -1787,435 +1755,6 @@ async function sweepStaleRecords(dryRun: boolean): Promise<void> {
   }
 
   console.log('\n   [OK] Sweep complete');
-}
-
-/**
- * Populate search indexes using TRUNCATE + INSERT
- * Search indexes are derived tables, not synced from XML
- */
-async function populateSearchIndexes(dryRun: boolean): Promise<void> {
-  console.log('\n5. Populating search indexes...\n');
-
-  if (dryRun) {
-    console.log('   [DRY RUN] Would populate search_index and search_index_extended');
-    return;
-  }
-
-  // Truncate and repopulate search_index
-  console.log('   Populating search_index...');
-  await queryWithRetry('TRUNCATE TABLE search_index RESTART IDENTITY');
-  await queryWithRetry(`
-    INSERT INTO search_index (
-      entity_type, code, search_text, name, parent_code, parent_name,
-      company_name, pack_info, price, reimbursable, cnk_code,
-      product_count, black_triangle,
-      vtm_code, vmp_code, amp_code, atc_code, company_actor_nr, vmp_group_code,
-      end_date
-    )
-
-    -- VTM
-    SELECT * FROM (
-      SELECT DISTINCT ON (code)
-        'vtm'::text as entity_type, code,
-        LOWER(COALESCE(name->>'en','') || ' ' || COALESCE(name->>'nl','') || ' ' ||
-              COALESCE(name->>'fr','') || ' ' || COALESCE(name->>'de','')) as search_text,
-        name, NULL::text as parent_code, NULL::jsonb as parent_name,
-        NULL::text as company_name, NULL::text as pack_info, NULL::numeric as price, NULL::boolean as reimbursable, NULL::text as cnk_code,
-        NULL::int as product_count, NULL::boolean as black_triangle,
-        NULL::text as vtm_code, NULL::text as vmp_code, NULL::text as amp_code, NULL::text as atc_code, NULL::text as company_actor_nr, NULL::text as vmp_group_code,
-        end_date
-      FROM vtm
-      ORDER BY code
-    ) vtm_sub
-
-    UNION ALL
-
-    -- VMP
-    SELECT * FROM (
-      SELECT DISTINCT ON (v.code)
-        'vmp'::text, v.code,
-        LOWER(COALESCE(v.name->>'en','') || ' ' || COALESCE(v.name->>'nl','') || ' ' ||
-              COALESCE(v.name->>'fr','') || ' ' || COALESCE(v.name->>'de','') || ' ' ||
-              COALESCE(v.abbreviated_name->>'en','') || ' ' || COALESCE(v.abbreviated_name->>'nl','')),
-        v.name, v.vtm_code, vtm.name,
-        NULL::text, NULL::text, NULL::numeric, NULL::boolean, NULL::text,
-        NULL::int, NULL::boolean,
-        v.vtm_code, NULL::text, NULL::text, NULL::text, NULL::text, v.vmp_group_code,
-        v.end_date
-      FROM vmp v
-      LEFT JOIN vtm ON vtm.code = v.vtm_code
-      ORDER BY v.code
-    ) vmp_sub
-
-    UNION ALL
-
-    -- AMP
-    SELECT * FROM (
-      SELECT DISTINCT ON (a.code)
-        'amp'::text, a.code,
-        LOWER(COALESCE(a.name->>'en','') || ' ' || COALESCE(a.name->>'nl','') || ' ' ||
-              COALESCE(a.name->>'fr','') || ' ' || COALESCE(a.name->>'de','') || ' ' ||
-              COALESCE(a.abbreviated_name->>'en','') || ' ' || COALESCE(a.official_name,'')),
-        a.name, a.vmp_code, v.name,
-        c.denomination, NULL::text, NULL::numeric, NULL::boolean, NULL::text,
-        NULL::int, a.black_triangle,
-        v.vtm_code, a.vmp_code, NULL::text, NULL::text, a.company_actor_nr, NULL::text,
-        a.end_date
-      FROM amp a
-      LEFT JOIN vmp v ON v.code = a.vmp_code
-      LEFT JOIN company c ON c.actor_nr = a.company_actor_nr
-      ORDER BY a.code
-    ) amp_sub
-
-    UNION ALL
-
-    -- AMPP
-    SELECT * FROM (
-      SELECT DISTINCT ON (ampp.cti_extended)
-        'ampp'::text, ampp.cti_extended,
-        LOWER(COALESCE(ampp.prescription_name->>'en','') || ' ' ||
-              COALESCE(ampp.prescription_name->>'nl','') || ' ' ||
-              COALESCE(ampp.prescription_name->>'fr','') || ' ' ||
-              COALESCE(amp.name->>'en','')),
-        COALESCE(ampp.prescription_name, amp.name), ampp.amp_code, amp.name,
-        NULL::text, ampp.pack_display_value, ampp.ex_factory_price,
-        (SELECT EXISTS(
-          SELECT 1 FROM dmpp d
-          WHERE d.ampp_cti_extended = ampp.cti_extended
-          AND d.reimbursable = true
-          AND (d.end_date IS NULL OR d.end_date > CURRENT_DATE)
-        ))::boolean,
-        (SELECT d.code FROM dmpp d
-         WHERE d.ampp_cti_extended = ampp.cti_extended
-         AND d.delivery_environment = 'P'
-         AND (d.end_date IS NULL OR d.end_date > CURRENT_DATE)
-         LIMIT 1),
-        NULL::int, NULL::boolean,
-        v.vtm_code, amp.vmp_code, ampp.amp_code, ampp.atc_code, NULL::text, NULL::text,
-        ampp.end_date
-      FROM ampp
-      JOIN amp ON amp.code = ampp.amp_code
-      LEFT JOIN vmp v ON v.code = amp.vmp_code
-      ORDER BY ampp.cti_extended
-    ) ampp_sub
-
-    UNION ALL
-
-    -- Company
-    SELECT * FROM (
-      SELECT DISTINCT ON (c.actor_nr)
-        'company'::text, c.actor_nr,
-        LOWER(COALESCE(c.denomination,'')),
-        jsonb_build_object('en', c.denomination, 'nl', c.denomination, 'fr', c.denomination, 'de', c.denomination),
-        NULL::text, NULL::jsonb,
-        NULL::text, NULL::text, NULL::numeric, NULL::boolean, NULL::text,
-        (SELECT COUNT(*)::int FROM amp WHERE company_actor_nr = c.actor_nr), NULL::boolean,
-        NULL::text, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text,
-        c.end_date
-      FROM company c
-      ORDER BY c.actor_nr
-    ) company_sub
-
-    UNION ALL
-
-    -- VMP Group
-    SELECT * FROM (
-      SELECT DISTINCT ON (code)
-        'vmp_group'::text, code,
-        LOWER(COALESCE(name->>'en','') || ' ' || COALESCE(name->>'nl','') || ' ' || COALESCE(name->>'fr','')),
-        name, NULL::text, NULL::jsonb,
-        NULL::text, NULL::text, NULL::numeric, NULL::boolean, NULL::text,
-        NULL::int, NULL::boolean,
-        NULL::text, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text,
-        end_date
-      FROM vmp_group
-      ORDER BY code
-    ) vmp_group_sub
-
-    UNION ALL
-
-    -- Substance
-    SELECT * FROM (
-      SELECT DISTINCT ON (code)
-        'substance'::text, code,
-        LOWER(COALESCE(name->>'en','') || ' ' || COALESCE(name->>'nl','') || ' ' || COALESCE(name->>'fr','')),
-        name, NULL::text, NULL::jsonb,
-        NULL::text, NULL::text, NULL::numeric, NULL::boolean, NULL::text,
-        NULL::int, NULL::boolean,
-        NULL::text, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text,
-        end_date
-      FROM substance
-      ORDER BY code
-    ) substance_sub
-
-    UNION ALL
-
-    -- ATC
-    SELECT * FROM (
-      SELECT DISTINCT ON (code)
-        'atc'::text, code,
-        LOWER(COALESCE(description,'')),
-        jsonb_build_object('en', description, 'nl', description, 'fr', description, 'de', description),
-        NULL::text, NULL::jsonb,
-        NULL::text, NULL::text, NULL::numeric, NULL::boolean, NULL::text,
-        NULL::int, NULL::boolean,
-        NULL::text, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text,
-        NULL::date
-      FROM atc_classification
-      ORDER BY code
-    ) atc_sub
-  `);
-  console.log('   [OK] Populated search_index');
-
-  // Truncate and repopulate search_index_extended
-  console.log('   Populating search_index_extended...');
-  await queryWithRetry('TRUNCATE TABLE search_index_extended RESTART IDENTITY');
-  await queryWithRetry(`
-    INSERT INTO search_index_extended (
-      entity_type, code, search_text, name, parent_code, parent_name,
-      company_name, pack_info, price, reimbursable, cnk_code,
-      product_count, black_triangle,
-      vtm_code, vmp_code, amp_code, atc_code, company_actor_nr, vmp_group_code,
-      end_date,
-      pharmaceutical_form_code, pharmaceutical_form_name,
-      route_of_administration_code, route_of_administration_name,
-      reimbursement_category, chapter_iv_exists, delivery_environment, medicine_type
-    )
-
-    -- VTM (no extended fields)
-    SELECT * FROM (
-      SELECT DISTINCT ON (code)
-        'vtm'::text as entity_type, code,
-        LOWER(COALESCE(name->>'en','') || ' ' || COALESCE(name->>'nl','') || ' ' ||
-              COALESCE(name->>'fr','') || ' ' || COALESCE(name->>'de','')) as search_text,
-        name, NULL::text as parent_code, NULL::jsonb as parent_name,
-        NULL::text as company_name, NULL::text as pack_info, NULL::numeric as price, NULL::boolean as reimbursable, NULL::text as cnk_code,
-        NULL::int as product_count, NULL::boolean as black_triangle,
-        NULL::text as vtm_code, NULL::text as vmp_code, NULL::text as amp_code, NULL::text as atc_code, NULL::text as company_actor_nr, NULL::text as vmp_group_code,
-        end_date,
-        NULL::varchar(20) as pharmaceutical_form_code, NULL::jsonb as pharmaceutical_form_name,
-        NULL::varchar(20) as route_of_administration_code, NULL::jsonb as route_of_administration_name,
-        NULL::varchar(10) as reimbursement_category, FALSE as chapter_iv_exists, NULL::char(1) as delivery_environment, NULL::varchar(50) as medicine_type
-      FROM vtm
-      ORDER BY code
-    ) vtm_sub
-
-    UNION ALL
-
-    -- VMP (no extended fields)
-    SELECT * FROM (
-      SELECT DISTINCT ON (v.code)
-        'vmp'::text, v.code,
-        LOWER(COALESCE(v.name->>'en','') || ' ' || COALESCE(v.name->>'nl','') || ' ' ||
-              COALESCE(v.name->>'fr','') || ' ' || COALESCE(v.name->>'de','') || ' ' ||
-              COALESCE(v.abbreviated_name->>'en','') || ' ' || COALESCE(v.abbreviated_name->>'nl','')),
-        v.name, v.vtm_code, vtm.name,
-        NULL::text, NULL::text, NULL::numeric, NULL::boolean, NULL::text,
-        NULL::int, NULL::boolean,
-        v.vtm_code, NULL::text, NULL::text, NULL::text, NULL::text, v.vmp_group_code,
-        v.end_date,
-        NULL::varchar(20), NULL::jsonb,
-        NULL::varchar(20), NULL::jsonb,
-        NULL::varchar(10), FALSE, NULL::char(1), NULL::varchar(50)
-      FROM vmp v
-      LEFT JOIN vtm ON vtm.code = v.vtm_code
-      ORDER BY v.code
-    ) vmp_sub
-
-    UNION ALL
-
-    -- AMP (with pharmaceutical_form, route_of_administration, medicine_type)
-    SELECT * FROM (
-      SELECT DISTINCT ON (a.code)
-        'amp'::text, a.code,
-        LOWER(COALESCE(a.name->>'en','') || ' ' || COALESCE(a.name->>'nl','') || ' ' ||
-              COALESCE(a.name->>'fr','') || ' ' || COALESCE(a.name->>'de','') || ' ' ||
-              COALESCE(a.abbreviated_name->>'en','') || ' ' || COALESCE(a.official_name,'')),
-        a.name, a.vmp_code, v.name,
-        c.denomination, NULL::text, NULL::numeric, NULL::boolean, NULL::text,
-        NULL::int, a.black_triangle,
-        v.vtm_code, a.vmp_code, NULL::text, NULL::text, a.company_actor_nr, NULL::text,
-        a.end_date,
-        comp.pharmaceutical_form_code, pf.name,
-        comp.route_of_administration_code, roa.name,
-        NULL::varchar(10), FALSE, NULL::char(1), a.medicine_type
-      FROM amp a
-      LEFT JOIN vmp v ON v.code = a.vmp_code
-      LEFT JOIN company c ON c.actor_nr = a.company_actor_nr
-      LEFT JOIN amp_component comp ON comp.amp_code = a.code AND comp.sequence_nr = 1
-      LEFT JOIN pharmaceutical_form pf ON pf.code = comp.pharmaceutical_form_code
-      LEFT JOIN route_of_administration roa ON roa.code = comp.route_of_administration_code
-      ORDER BY a.code
-    ) amp_sub
-
-    UNION ALL
-
-    -- AMPP (with reimbursement_category, chapter_iv_exists, delivery_environment)
-    SELECT * FROM (
-      SELECT DISTINCT ON (ampp.cti_extended)
-        'ampp'::text, ampp.cti_extended,
-        LOWER(COALESCE(ampp.prescription_name->>'en','') || ' ' ||
-              COALESCE(ampp.prescription_name->>'nl','') || ' ' ||
-              COALESCE(ampp.prescription_name->>'fr','') || ' ' ||
-              COALESCE(amp.name->>'en','')),
-        COALESCE(ampp.prescription_name, amp.name), ampp.amp_code, amp.name,
-        NULL::text, ampp.pack_display_value, ampp.ex_factory_price,
-        (SELECT EXISTS(
-          SELECT 1 FROM dmpp d
-          WHERE d.ampp_cti_extended = ampp.cti_extended
-          AND d.reimbursable = true
-          AND (d.end_date IS NULL OR d.end_date > CURRENT_DATE)
-        ))::boolean,
-        (SELECT d.code FROM dmpp d
-         WHERE d.ampp_cti_extended = ampp.cti_extended
-         AND d.delivery_environment = 'P'
-         AND (d.end_date IS NULL OR d.end_date > CURRENT_DATE)
-         LIMIT 1),
-        NULL::int, NULL::boolean,
-        v.vtm_code, amp.vmp_code, ampp.amp_code, ampp.atc_code, NULL::text, NULL::text,
-        ampp.end_date,
-        comp.pharmaceutical_form_code, pf.name,
-        comp.route_of_administration_code, roa.name,
-        (SELECT rc.reimbursement_criterion_category FROM reimbursement_context rc
-         JOIN dmpp d ON d.code = rc.dmpp_code AND d.delivery_environment = rc.delivery_environment
-         WHERE d.ampp_cti_extended = ampp.cti_extended
-         AND (rc.end_date IS NULL OR rc.end_date > CURRENT_DATE)
-         LIMIT 1),
-        (SELECT EXISTS(
-          SELECT 1 FROM dmpp d
-          JOIN dmpp_chapter_iv dc ON dc.dmpp_code = d.code AND dc.delivery_environment = d.delivery_environment
-          WHERE d.ampp_cti_extended = ampp.cti_extended
-        ))::boolean,
-        (SELECT d.delivery_environment FROM dmpp d
-         WHERE d.ampp_cti_extended = ampp.cti_extended
-         AND (d.end_date IS NULL OR d.end_date > CURRENT_DATE)
-         LIMIT 1),
-        amp.medicine_type
-      FROM ampp
-      JOIN amp ON amp.code = ampp.amp_code
-      LEFT JOIN vmp v ON v.code = amp.vmp_code
-      LEFT JOIN amp_component comp ON comp.amp_code = amp.code AND comp.sequence_nr = 1
-      LEFT JOIN pharmaceutical_form pf ON pf.code = comp.pharmaceutical_form_code
-      LEFT JOIN route_of_administration roa ON roa.code = comp.route_of_administration_code
-      ORDER BY ampp.cti_extended
-    ) ampp_sub
-
-    UNION ALL
-
-    -- Company (no extended fields)
-    SELECT * FROM (
-      SELECT DISTINCT ON (c.actor_nr)
-        'company'::text, c.actor_nr,
-        LOWER(COALESCE(c.denomination,'')),
-        jsonb_build_object('en', c.denomination, 'nl', c.denomination, 'fr', c.denomination, 'de', c.denomination),
-        NULL::text, NULL::jsonb,
-        NULL::text, NULL::text, NULL::numeric, NULL::boolean, NULL::text,
-        (SELECT COUNT(*)::int FROM amp WHERE company_actor_nr = c.actor_nr), NULL::boolean,
-        NULL::text, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text,
-        c.end_date,
-        NULL::varchar(20), NULL::jsonb,
-        NULL::varchar(20), NULL::jsonb,
-        NULL::varchar(10), FALSE, NULL::char(1), NULL::varchar(50)
-      FROM company c
-      ORDER BY c.actor_nr
-    ) company_sub
-
-    UNION ALL
-
-    -- VMP Group (no extended fields)
-    SELECT * FROM (
-      SELECT DISTINCT ON (code)
-        'vmp_group'::text, code,
-        LOWER(COALESCE(name->>'en','') || ' ' || COALESCE(name->>'nl','') || ' ' || COALESCE(name->>'fr','')),
-        name, NULL::text, NULL::jsonb,
-        NULL::text, NULL::text, NULL::numeric, NULL::boolean, NULL::text,
-        NULL::int, NULL::boolean,
-        NULL::text, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text,
-        end_date,
-        NULL::varchar(20), NULL::jsonb,
-        NULL::varchar(20), NULL::jsonb,
-        NULL::varchar(10), FALSE, NULL::char(1), NULL::varchar(50)
-      FROM vmp_group
-      ORDER BY code
-    ) vmp_group_sub
-
-    UNION ALL
-
-    -- Substance (no extended fields)
-    SELECT * FROM (
-      SELECT DISTINCT ON (code)
-        'substance'::text, code,
-        LOWER(COALESCE(name->>'en','') || ' ' || COALESCE(name->>'nl','') || ' ' || COALESCE(name->>'fr','')),
-        name, NULL::text, NULL::jsonb,
-        NULL::text, NULL::text, NULL::numeric, NULL::boolean, NULL::text,
-        NULL::int, NULL::boolean,
-        NULL::text, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text,
-        end_date,
-        NULL::varchar(20), NULL::jsonb,
-        NULL::varchar(20), NULL::jsonb,
-        NULL::varchar(10), FALSE, NULL::char(1), NULL::varchar(50)
-      FROM substance
-      ORDER BY code
-    ) substance_sub
-
-    UNION ALL
-
-    -- ATC (no extended fields)
-    SELECT * FROM (
-      SELECT DISTINCT ON (code)
-        'atc'::text, code,
-        LOWER(COALESCE(description,'')),
-        jsonb_build_object('en', description, 'nl', description, 'fr', description, 'de', description),
-        NULL::text, NULL::jsonb,
-        NULL::text, NULL::text, NULL::numeric, NULL::boolean, NULL::text,
-        NULL::int, NULL::boolean,
-        NULL::text, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text,
-        NULL::date,
-        NULL::varchar(20), NULL::jsonb,
-        NULL::varchar(20), NULL::jsonb,
-        NULL::varchar(10), FALSE, NULL::char(1), NULL::varchar(50)
-      FROM atc_classification
-      ORDER BY code
-    ) atc_sub
-  `);
-  console.log('   [OK] Populated search_index_extended');
-
-  // Recreate indexes
-  console.log('   Recreating search indexes...');
-
-  // search_index indexes
-  await queryWithRetry(`CREATE INDEX IF NOT EXISTS idx_search_text_trgm ON search_index USING GIN (search_text gin_trgm_ops)`);
-  await queryWithRetry(`CREATE INDEX IF NOT EXISTS idx_search_code ON search_index (code)`);
-  await queryWithRetry(`CREATE INDEX IF NOT EXISTS idx_search_cnk ON search_index (cnk_code) WHERE cnk_code IS NOT NULL`);
-  await queryWithRetry(`CREATE INDEX IF NOT EXISTS idx_search_vtm ON search_index (vtm_code) WHERE vtm_code IS NOT NULL`);
-  await queryWithRetry(`CREATE INDEX IF NOT EXISTS idx_search_vmp ON search_index (vmp_code) WHERE vmp_code IS NOT NULL`);
-  await queryWithRetry(`CREATE INDEX IF NOT EXISTS idx_search_amp ON search_index (amp_code) WHERE amp_code IS NOT NULL`);
-  await queryWithRetry(`CREATE INDEX IF NOT EXISTS idx_search_atc ON search_index (atc_code) WHERE atc_code IS NOT NULL`);
-  await queryWithRetry(`CREATE INDEX IF NOT EXISTS idx_search_company ON search_index (company_actor_nr) WHERE company_actor_nr IS NOT NULL`);
-  await queryWithRetry(`CREATE INDEX IF NOT EXISTS idx_search_vmp_group ON search_index (vmp_group_code) WHERE vmp_group_code IS NOT NULL`);
-  await queryWithRetry(`CREATE INDEX IF NOT EXISTS idx_search_entity_type ON search_index (entity_type)`);
-  await queryWithRetry(`CREATE INDEX IF NOT EXISTS idx_search_end_date ON search_index (end_date) WHERE end_date IS NOT NULL`);
-
-  // search_index_extended indexes
-  await queryWithRetry(`CREATE INDEX IF NOT EXISTS idx_search_ext_text_trgm ON search_index_extended USING GIN (search_text gin_trgm_ops)`);
-  await queryWithRetry(`CREATE INDEX IF NOT EXISTS idx_search_ext_code ON search_index_extended (code)`);
-  await queryWithRetry(`CREATE INDEX IF NOT EXISTS idx_search_ext_cnk ON search_index_extended (cnk_code) WHERE cnk_code IS NOT NULL`);
-  await queryWithRetry(`CREATE INDEX IF NOT EXISTS idx_search_ext_vtm ON search_index_extended (vtm_code) WHERE vtm_code IS NOT NULL`);
-  await queryWithRetry(`CREATE INDEX IF NOT EXISTS idx_search_ext_vmp ON search_index_extended (vmp_code) WHERE vmp_code IS NOT NULL`);
-  await queryWithRetry(`CREATE INDEX IF NOT EXISTS idx_search_ext_amp ON search_index_extended (amp_code) WHERE amp_code IS NOT NULL`);
-  await queryWithRetry(`CREATE INDEX IF NOT EXISTS idx_search_ext_atc ON search_index_extended (atc_code) WHERE atc_code IS NOT NULL`);
-  await queryWithRetry(`CREATE INDEX IF NOT EXISTS idx_search_ext_company ON search_index_extended (company_actor_nr) WHERE company_actor_nr IS NOT NULL`);
-  await queryWithRetry(`CREATE INDEX IF NOT EXISTS idx_search_ext_vmp_group ON search_index_extended (vmp_group_code) WHERE vmp_group_code IS NOT NULL`);
-  await queryWithRetry(`CREATE INDEX IF NOT EXISTS idx_search_ext_entity_type ON search_index_extended (entity_type)`);
-  await queryWithRetry(`CREATE INDEX IF NOT EXISTS idx_search_ext_end_date ON search_index_extended (end_date) WHERE end_date IS NOT NULL`);
-  await queryWithRetry(`CREATE INDEX IF NOT EXISTS idx_search_ext_form ON search_index_extended (pharmaceutical_form_code) WHERE pharmaceutical_form_code IS NOT NULL`);
-  await queryWithRetry(`CREATE INDEX IF NOT EXISTS idx_search_ext_route ON search_index_extended (route_of_administration_code) WHERE route_of_administration_code IS NOT NULL`);
-  await queryWithRetry(`CREATE INDEX IF NOT EXISTS idx_search_ext_reimb_cat ON search_index_extended (reimbursement_category) WHERE reimbursement_category IS NOT NULL`);
-  await queryWithRetry(`CREATE INDEX IF NOT EXISTS idx_search_ext_medicine_type ON search_index_extended (medicine_type) WHERE medicine_type IS NOT NULL`);
-  await queryWithRetry(`CREATE INDEX IF NOT EXISTS idx_search_ext_delivery_env ON search_index_extended (delivery_environment) WHERE delivery_environment IS NOT NULL`);
-  await queryWithRetry(`CREATE INDEX IF NOT EXISTS idx_search_ext_chapter_iv ON search_index_extended (chapter_iv_exists) WHERE chapter_iv_exists = TRUE`);
-
-  console.log('   [OK] Search indexes ready');
 }
 
 // ============================================================================
@@ -2252,7 +1791,7 @@ async function processXmlFile(
 
     // Import in batches
     if (batchRecords.length >= CONFIG.batchSize) {
-      const counts = await importRecords(batchRecords, dryRun, verbose);
+      const counts = importRecords(batchRecords, dryRun, verbose);
       for (const [table, count] of Object.entries(counts)) {
         progress.recordCounts[table] = (progress.recordCounts[table] || 0) + count;
       }
@@ -2274,7 +1813,7 @@ async function processXmlFile(
 
   // Import remaining records
   if (batchRecords.length > 0) {
-    const counts = await importRecords(batchRecords, dryRun, verbose);
+    const counts = importRecords(batchRecords, dryRun, verbose);
     for (const [table, count] of Object.entries(counts)) {
       progress.recordCounts[table] = (progress.recordCounts[table] || 0) + count;
     }
@@ -2303,10 +1842,24 @@ async function main(): Promise<void> {
   if (verbose) console.log('   Mode: VERBOSE');
   if (skipDownload) console.log('   Mode: SKIP DOWNLOAD (using existing files)');
 
-  // Check DATABASE_URL
-  if (!process.env.DATABASE_URL && !dryRun) {
-    console.error('\n   ERROR: DATABASE_URL environment variable is required');
-    process.exit(1);
+  // Load schema into database if not dry run
+  if (!dryRun) {
+    const schemaPath = join(dirname(new URL(import.meta.url).pathname), 'schema.sql');
+    if (existsSync(schemaPath)) {
+      console.log('   Loading schema from scripts/schema.sql...');
+      const schemaSQL = readFileSync(schemaPath, 'utf-8');
+      getDb().exec(schemaSQL);
+      console.log('   [OK] Schema loaded');
+    } else {
+      // Fall back to src/server/db/schema.sql
+      const fallbackPath = join(dirname(new URL(import.meta.url).pathname), '..', 'src', 'server', 'db', 'schema.sql');
+      if (existsSync(fallbackPath)) {
+        console.log('   Loading schema from src/server/db/schema.sql...');
+        const schemaSQL = readFileSync(fallbackPath, 'utf-8');
+        getDb().exec(schemaSQL);
+        console.log('   [OK] Schema loaded');
+      }
+    }
   }
 
   // Initialize or load progress
@@ -2373,7 +1926,7 @@ async function main(): Promise<void> {
 
     // Phase 2: Ensure sync_id columns exist (idempotent migration)
     if (progress.phase === 'migrate') {
-      await ensureSyncIdColumns(dryRun);
+      ensureSyncIdColumns(dryRun);
       progress.phase = 'import';
       saveProgress(progress);
     }
@@ -2443,7 +1996,7 @@ async function main(): Promise<void> {
       }
 
       // Populate derived table from imported data
-      await populateDmppChapterIV(dryRun);
+      populateDmppChapterIV(dryRun);
 
       progress.phase = 'sweep';
       saveProgress(progress);
@@ -2462,14 +2015,7 @@ async function main(): Promise<void> {
         throw new Error(`Missing data for tables: ${missingTables.join(', ')}`);
       }
 
-      await sweepStaleRecords(dryRun);
-      progress.phase = 'search';
-      saveProgress(progress);
-    }
-
-    // Phase 5: Populate search indexes
-    if (progress.phase === 'search') {
-      await populateSearchIndexes(dryRun);
+      sweepStaleRecords(dryRun);
       progress.phase = 'done';
       saveProgress(progress);
     }
@@ -2508,8 +2054,8 @@ async function main(): Promise<void> {
     saveProgress(progress);
     process.exit(1);
   } finally {
-    if (dbClient) {
-      dbClient.release();
+    if (db) {
+      db.close();
     }
   }
 }

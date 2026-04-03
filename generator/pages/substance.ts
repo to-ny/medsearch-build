@@ -1,26 +1,27 @@
 import { mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
-import type { Pool } from "pg";
+import { queryAll } from "../db";
 import {
   layout, esc, ml, label, badge, entitySlug, entityUrl,
   localized, relationshipList, infoRow, summaryCard, formatDate, section,
 } from "../html";
 
-export async function generateSubstancePages(pool: Pool, dist: string) {
+export function generateSubstancePages(dist: string) {
   console.log("\nGenerating Substance pages...");
   const dir = join(dist, "ingredients");
   mkdirSync(dir, { recursive: true });
 
-  const { rows } = await pool.query(`
+  const rows = queryAll(`
     SELECT s.code, s.name, s.start_date, s.end_date,
-      (SELECT COALESCE(json_agg(json_build_object(
-        'code', a.code, 'name', a.name, 'companyName', c.denomination
-      ) ORDER BY a.name->>'en'), '[]'::json)
+      (SELECT COALESCE(json_group_array(json_object(
+        'code', a.code, 'name', json(a.name), 'companyName', c.denomination
+      )), '[]')
       FROM amp_ingredient i JOIN amp a ON a.code = i.amp_code
       LEFT JOIN company c ON c.actor_nr = a.company_actor_nr
-      WHERE i.substance_code = s.code AND (a.end_date IS NULL OR a.end_date > CURRENT_DATE)) as used_in_amps
-    FROM substance s WHERE s.end_date IS NULL OR s.end_date > CURRENT_DATE
-    ORDER BY s.name->>'en'`);
+      WHERE i.substance_code = s.code AND (a.end_date IS NULL OR a.end_date > date('now'))
+      ORDER BY json_extract(a.name, '$.en')) as used_in_amps
+    FROM substance s WHERE s.end_date IS NULL OR s.end_date > date('now')
+    ORDER BY json_extract(s.name, '$.en')`);
 
   for (const sub of rows) {
     const slug = entitySlug(sub.name, sub.code);
