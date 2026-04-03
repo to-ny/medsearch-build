@@ -18,6 +18,7 @@
             pagefind
             curl
             unzip
+            util-linux  # prlimit
           ];
 
           shellHook = ''
@@ -67,11 +68,11 @@
           site = pkgs.stdenv.mkDerivation {
             name = "medsearch-site";
             src = self.packages.${system}.html;
-            nativeBuildInputs = [ pkgs.pagefind ];
+            nativeBuildInputs = with pkgs; [ pagefind util-linux ];
             buildPhase = ''
               cp -r $src site
               chmod -R u+w site
-              pagefind --site site --output-subdir _search
+              ionice -c 3 nice -n 15 prlimit --as=4000000000 -- pagefind --site site --output-subdir _search
             '';
             installPhase = ''
               cp -r site $out
