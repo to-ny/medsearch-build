@@ -25,41 +25,61 @@
             echo "  bun:      $(bun --version)"
             echo "  pagefind: $(pagefind --version)"
             echo ""
-            echo "Commands:"
-            echo "  ./build.sh              Full pipeline: fetch SAM → import → generate → pagefind"
-            echo "  ./build.sh --skip-fetch  Use existing SAM XML in data/sam-export/"
-            echo "  ./build.sh --skip-import Use existing SQLite database"
+            echo "Steps:  nix build .#database  →  nix build .#html  →  nix build .#site"
+            echo "Full:   nix build"
+            echo "Dev:    ./build.sh [--skip-fetch] [--skip-import]"
           '';
         };
 
-        packages.default = pkgs.stdenv.mkDerivation {
-          name = "medsearch-static";
-          src = ./.;
+        packages = {
+          # Step 1: SAM XML → SQLite database
+          # Requires SAM XML files in data/sam-export/ (run ./fetch-sam.sh first)
+          database = pkgs.stdenv.mkDerivation {
+            name = "medsearch-database";
+            src = ./.;
+            nativeBuildInputs = [ pkgs.bun ];
+            buildPhase = ''
+              export HOME=$TMPDIR
+              export DB_PATH=$TMPDIR/medsearch.sqlite
+              bun run scripts/sync-sam-database.ts --skip-download --verbose
+            '';
+            installPhase = ''
+              cp $TMPDIR/medsearch.sqlite $out
+            '';
+          };
 
-          nativeBuildInputs = with pkgs; [
-            bun
-            pagefind
-          ];
+          # Step 2: SQLite database → HTML pages
+          html = pkgs.stdenv.mkDerivation {
+            name = "medsearch-html";
+            src = ./.;
+            nativeBuildInputs = [ pkgs.bun ];
+            buildPhase = ''
+              export HOME=$TMPDIR
+              export DB_PATH=${self.packages.${system}.database}
+              bun run generator/index.ts
+            '';
+            installPhase = ''
+              cp -r dist $out
+            '';
+          };
 
-          # SAM XML must be present in data/sam-export/ before nix build.
-          # Run ./fetch-sam.sh first.
-          buildPhase = ''
-            export HOME=$TMPDIR
-            export DB_PATH=$TMPDIR/medsearch.sqlite
+          # Step 3: HTML pages → HTML + Pagefind search index
+          site = pkgs.stdenv.mkDerivation {
+            name = "medsearch-site";
+            src = self.packages.${system}.html;
+            nativeBuildInputs = [ pkgs.pagefind ];
+            buildPhase = ''
+              cp -r $src site
+              chmod -R u+w site
+              pagefind --site site --output-subdir _search
+            '';
+            installPhase = ''
+              cp -r site $out
+            '';
+          };
 
-            echo "=== Importing SAM XML into SQLite ==="
-            bun run scripts/sync-sam-database.ts --skip-download --verbose
-
-            echo "=== Generating static HTML ==="
-            bun run generator/index.ts
-
-            echo "=== Building search index ==="
-            ionice -c 3 nice -n 15 pagefind --site dist --output-subdir _search
-          '';
-
-          installPhase = ''
-            cp -r dist $out
-          '';
+          # Full pipeline (default target)
+          default = self.packages.${system}.site;
         };
       }
     );
