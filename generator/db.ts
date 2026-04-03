@@ -7,7 +7,6 @@ let _db: Database | null = null;
 export function getDb(): Database {
   if (!_db) {
     _db = new Database(DB_PATH, { readonly: true });
-    _db.exec("PRAGMA journal_mode = WAL");
   }
   return _db;
 }

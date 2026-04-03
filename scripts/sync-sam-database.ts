@@ -143,7 +143,7 @@ function getDb(): Database {
       mkdirSync(dir, { recursive: true });
     }
     db = new Database(dbPath);
-    db.exec("PRAGMA journal_mode = WAL");
+    db.exec("PRAGMA journal_mode = DELETE");
     db.exec("PRAGMA synchronous = NORMAL");
     db.exec("PRAGMA foreign_keys = ON");
     db.exec("PRAGMA cache_size = -64000"); // 64MB cache

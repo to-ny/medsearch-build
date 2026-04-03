@@ -9,50 +9,91 @@ import {
 export function generateChapterIVPages(dist: string) {
   console.log("\nGenerating Chapter IV pages...");
 
-  const rows = queryAll(`
-    SELECT cp.chapter_name, cp.paragraph_name, cp.key_string,
-      cp.process_type, cp.process_type_overrule, cp.paragraph_version,
-      cp.modification_status, cp.start_date, cp.end_date,
-      (SELECT COALESCE(json_group_array(json_object(
-        'verseSeq', v.verse_seq, 'verseNum', v.verse_num,
-        'verseSeqParent', v.verse_seq_parent, 'verseLevel', v.verse_level,
-        'text', json(v.text), 'requestType', v.request_type,
-        'agreementTermQuantity', v.agreement_term_quantity,
-        'agreementTermUnit', v.agreement_term_unit
-      )), '[]')
-      FROM chapter_iv_verse v
-      WHERE v.chapter_name = cp.chapter_name AND v.paragraph_name = cp.paragraph_name
-      ORDER BY v.verse_seq) as verses,
-      (SELECT count(DISTINCT d.ampp_cti_extended)
-       FROM dmpp_chapter_iv dc JOIN dmpp d ON d.code = dc.dmpp_code AND d.delivery_environment = dc.delivery_environment
-       WHERE dc.chapter_name = cp.chapter_name AND dc.paragraph_name = cp.paragraph_name
-         AND (d.end_date IS NULL OR d.end_date > date('now'))) as linked_products_count,
-      (SELECT COALESCE(json_group_array(json_object(
-        'ctiExtended', sub.cti_extended, 'prescriptionName', json(sub.prescription_name),
-        'packDisplayValue', sub.pack_display_value
-      )), '[]')
-      FROM (
-        SELECT ampp.cti_extended, ampp.prescription_name, ampp.pack_display_value
-        FROM ampp
-        WHERE ampp.cti_extended IN (
-          SELECT DISTINCT d.ampp_cti_extended FROM dmpp_chapter_iv dc
-          JOIN dmpp d ON d.code = dc.dmpp_code AND d.delivery_environment = dc.delivery_environment
-          WHERE dc.chapter_name = cp.chapter_name AND dc.paragraph_name = cp.paragraph_name
-            AND (d.end_date IS NULL OR d.end_date > date('now'))
-        ) AND (ampp.end_date IS NULL OR ampp.end_date > date('now'))
-        ORDER BY json_extract(ampp.prescription_name, '$.en')
-        LIMIT 20
-      ) sub) as linked_products
-    FROM chapter_iv_paragraph cp
-    WHERE cp.end_date IS NULL OR cp.end_date > date('now')
-    ORDER BY cp.chapter_name, cp.paragraph_name`);
+  // Get all active paragraphs
+  const paragraphs = queryAll(`
+    SELECT chapter_name, paragraph_name, key_string,
+      process_type, process_type_overrule, paragraph_version,
+      modification_status, start_date, end_date
+    FROM chapter_iv_paragraph
+    WHERE end_date IS NULL OR end_date > date('now')
+    ORDER BY chapter_name, paragraph_name`);
 
-  for (const ch of rows) {
+  for (const ch of paragraphs) {
+    const legalRefPath = `${ch.chapter_name}/${ch.paragraph_name}`;
+
+    // Build verse hierarchy from legal_text (same approach as medsearch)
+    const verses = queryAll(`
+      WITH RECURSIVE
+      text_hierarchy AS (
+        SELECT key, parent_text_key, 1 as verse_level
+        FROM legal_text
+        WHERE legal_reference_path = ?
+          AND parent_text_key IS NULL
+          AND (end_date IS NULL OR end_date > date('now'))
+        UNION ALL
+        SELECT lt.key, lt.parent_text_key, h.verse_level + 1
+        FROM legal_text lt
+        JOIN text_hierarchy h ON lt.parent_text_key = h.key
+        WHERE lt.legal_reference_path = ?
+          AND (lt.end_date IS NULL OR lt.end_date > date('now'))
+      ),
+      numbered_texts AS (
+        SELECT
+          lt.key,
+          lt.parent_text_key,
+          lt.content,
+          lt.sequence_nr,
+          lt.start_date,
+          th.verse_level,
+          ROW_NUMBER() OVER (ORDER BY lt.sequence_nr, lt.key) as verse_seq
+        FROM legal_text lt
+        JOIN text_hierarchy th ON th.key = lt.key
+        WHERE lt.legal_reference_path = ?
+          AND (lt.end_date IS NULL OR lt.end_date > date('now'))
+      )
+      SELECT
+        t.content as text,
+        t.verse_seq as verseSeq,
+        t.verse_seq as verseNum,
+        COALESCE(p.verse_seq, 0) as verseSeqParent,
+        t.verse_level as verseLevel,
+        t.start_date
+      FROM numbered_texts t
+      LEFT JOIN numbered_texts p ON p.key = t.parent_text_key
+      ORDER BY t.verse_seq`, [legalRefPath, legalRefPath, legalRefPath]);
+
+    // Get linked products count and sample
+    const linkedProducts = queryAll(`
+      SELECT ampp.cti_extended, ampp.prescription_name, ampp.pack_display_value
+      FROM ampp
+      WHERE ampp.cti_extended IN (
+        SELECT DISTINCT d.ampp_cti_extended FROM dmpp_chapter_iv dc
+        JOIN dmpp d ON d.code = dc.dmpp_code AND d.delivery_environment = dc.delivery_environment
+        WHERE dc.chapter_name = ? AND dc.paragraph_name = ?
+          AND (d.end_date IS NULL OR d.end_date > date('now'))
+      ) AND (ampp.end_date IS NULL OR ampp.end_date > date('now'))
+      ORDER BY json_extract(ampp.prescription_name, '$.en')
+      LIMIT 20`, [ch.chapter_name, ch.paragraph_name]);
+
+    const countRow = queryAll(`
+      SELECT count(DISTINCT d.ampp_cti_extended) as cnt
+      FROM dmpp_chapter_iv dc JOIN dmpp d ON d.code = dc.dmpp_code AND d.delivery_environment = dc.delivery_environment
+      WHERE dc.chapter_name = ? AND dc.paragraph_name = ?
+        AND (d.end_date IS NULL OR d.end_date > date('now'))`,
+      [ch.chapter_name, ch.paragraph_name]);
+
+    const linked_products_count = countRow[0]?.cnt || 0;
+
     const dir = join(dist, "chapter-iv", ch.chapter_name, ch.paragraph_name);
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "index.html"), renderChapterIV(ch));
+    writeFileSync(join(dir, "index.html"), renderChapterIV({
+      ...ch,
+      verses,
+      linked_products: linkedProducts,
+      linked_products_count,
+    }));
   }
-  console.log(`  ${rows.length} Chapter IV pages`);
+  console.log(`  ${paragraphs.length} Chapter IV pages`);
 }
 
 const PROCESS_TYPES: Record<string, string> = {
@@ -85,8 +126,8 @@ function renderChapterIV(ch: any): string {
   // Linked products
   const productsHtml = ch.linked_products.length > 0
     ? section("chapterIV.coveredProducts", `<div class="rel-list">${ch.linked_products.map((p: any) => {
-        const pName = p.prescriptionName || { en: p.packDisplayValue || p.ctiExtended };
-        return `<a href="${entityUrl.ampp(pName, p.ctiExtended)}" class="rel-item">${badge("ampp")}<div class="rel-item-content"><span class="rel-item-name">${ml(pName)}</span></div><span class="rel-item-arrow">›</span></a>`;
+        const pName = p.prescription_name || { en: p.pack_display_value || p.cti_extended };
+        return `<a href="${entityUrl.ampp(pName, p.cti_extended)}" class="rel-item">${badge("ampp")}<div class="rel-item-content"><span class="rel-item-name">${ml(pName)}</span></div><span class="rel-item-arrow">›</span></a>`;
       }).join("")}</div>${ch.linked_products_count > 20 ? `<p class="text-muted">${ch.linked_products_count - 20} more products</p>` : ""}`,
       { count: ch.linked_products_count })
     : "";
@@ -115,7 +156,7 @@ ${overview}${versesHtml}${productsHtml}
 
 function renderVerseTree(verses: any[]): string {
   return `<div class="verse-tree">${verses.map((v) => {
-    const text = localized(v.text, "en") || "";
+    const text = v.text ? localized(v.text, "en") || "" : "";
     const meta: string[] = [];
     if (v.requestType === "N") meta.push('<span class="verse-tag">New</span>');
     if (v.requestType === "P") meta.push('<span class="verse-tag">Prolongation</span>');
