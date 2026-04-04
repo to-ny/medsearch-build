@@ -102,9 +102,6 @@ function renderATC(atc: any, atcMap: Map<string, any>): string {
 
   return layout(`${atc.code} — ${atc.description}`, `
 <div class="container page-content">
-<nav class="breadcrumbs" aria-label="Breadcrumb" data-pagefind-ignore>
-<a href="/">Home</a><span class="sep">›</span><span aria-current="page">${esc(atc.code)} — ${esc(atc.description)}</span>
-</nav>
 <div class="detail-grid"><div class="main-col">
 <div class="entity-header" data-pagefind-body>${badge("atc")}
 <h1 data-pagefind-meta="title">${esc(atc.description)}</h1>

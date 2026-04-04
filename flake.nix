@@ -10,8 +10,6 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-        resourceLimit = cmd:
-          "ionice -c 3 nice -n 15 ${cmd}";
 
         # SAM v2 export — update these when a new version is published
         samVersion = "11798";
@@ -23,17 +21,27 @@
           stripRoot = false;
           extension = "zip";
         };
+
+        # Only generator + scripts — changes to static/ won't trigger html rebuild
+        generatorSrc = pkgs.lib.cleanSourceWith {
+          src = ./.;
+          filter = path: type:
+            let base = builtins.baseNameOf path; in
+            base == "generator" || base == "scripts" || base == "package.json"
+            || pkgs.lib.hasPrefix (toString ./generator) path
+            || pkgs.lib.hasPrefix (toString ./scripts) path;
+        };
       in
       {
         devShells.default = pkgs.mkShell {
-          buildInputs = with pkgs; [ bun pagefind curl unzip util-linux ];
+          buildInputs = with pkgs; [ bun curl unzip ];
           shellHook = ''
             echo "MedSearch build environment"
             echo ""
             echo "  nix build .#database   SAM XML → SQLite"
-            echo "  nix build .#html       SQLite → HTML pages"
-            echo "  nix build .#site       HTML → HTML + search index"
-            echo "  nix build              Full pipeline"
+            echo "  nix build .#html       SQLite → HTML + search indexes"
+            echo "  nix build .#site       Merge html + static assets"
+            echo "  nix build              Full pipeline (= .#site)"
             echo "  nix develop            This shell"
             echo "  nix run .#update-sam   Check for new SAM version"
           '';
@@ -55,35 +63,32 @@
             installPhase = "cp $TMPDIR/medsearch.sqlite $out";
           };
 
-          # Step 2: SQLite → HTML pages
+          # Step 2: SQLite → HTML pages + JSON search indexes (content only)
           html = pkgs.stdenv.mkDerivation {
             name = "medsearch-html";
-            src = ./.;
+            src = generatorSrc;
             nativeBuildInputs = [ pkgs.bun ];
             buildPhase = ''
               export HOME=$TMPDIR
               export DB_PATH=${self.packages.${system}.database}
+              export SKIP_STATIC=1
+              mkdir -p static
               bun run generator/index.ts
             '';
             installPhase = "cp -r dist $out";
           };
 
-          # Step 3: HTML → HTML + Pagefind search index
-          site = pkgs.stdenv.mkDerivation {
-            name = "medsearch-site";
-            src = self.packages.${system}.html;
-            nativeBuildInputs = with pkgs; [ pagefind util-linux ];
-            buildPhase = ''
-              cp -r $src site && chmod -R u+w site
-              ${resourceLimit "pagefind --site site --output-subdir _search"}
-            '';
-            installPhase = "cp -r site $out";
-          };
+          # Step 3: Merge html + static assets (cheap — only rebuilds on static/ changes)
+          site = pkgs.runCommand "medsearch-site" {} ''
+            mkdir -p $out
+            cp -r ${self.packages.${system}.html}/* $out/
+            chmod -R u+w $out
+            cp -r ${./static}/* $out/
+          '';
 
           default = self.packages.${system}.site;
         };
 
-        # Helper to check for new SAM versions
         apps.update-sam = {
           type = "app";
           program = "${pkgs.writeShellApplication {

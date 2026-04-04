@@ -119,9 +119,6 @@ function renderAMP(a: any): string {
 
   return layout(name, `
 <div class="container page-content">
-<nav class="breadcrumbs" aria-label="Breadcrumb" data-pagefind-ignore>
-<a href="/">Home</a><span class="sep">›</span><span aria-current="page">${ml(a.name)}</span>
-</nav>
 <div class="detail-grid"><div class="main-col">
 <div class="entity-header" data-pagefind-body>${badge("amp")}${a.black_triangle ? ' <span class="black-triangle" title="Enhanced Monitoring">▲</span>' : ""}
 <h1 data-pagefind-meta="title">${ml(a.name)}</h1>

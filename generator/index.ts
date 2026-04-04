@@ -11,6 +11,7 @@ import { generateVMPGroupPages } from "./pages/vmp-group";
 import { generateATCPages } from "./pages/atc";
 import { generateChapterIVPages } from "./pages/chapter-iv";
 import { generateHomePage } from "./pages/home";
+import { generateSearchIndexes } from "./indexes";
 
 const DIST = join(import.meta.dir, "..", "dist");
 const STATIC = join(import.meta.dir, "..", "static");
@@ -22,8 +23,10 @@ async function main() {
 
   rmSync(DIST, { recursive: true, force: true });
   mkdirSync(DIST, { recursive: true });
-  cpSync(STATIC, DIST, { recursive: true });
-  console.log("Copied static assets");
+  if (process.env.SKIP_STATIC !== "1") {
+    cpSync(STATIC, DIST, { recursive: true });
+    console.log("Copied static assets");
+  }
 
   const db = getDb();
   console.log(`Opened database: ${process.env.DB_PATH || "data/medsearch.sqlite"}`);
@@ -52,6 +55,9 @@ async function main() {
   generateATCPages(DIST);
   generateChapterIVPages(DIST);
   generateHomePage(DIST, stats);
+
+  console.log("\nGenerating search indexes...");
+  generateSearchIndexes(DIST);
 
   closeDb();
 

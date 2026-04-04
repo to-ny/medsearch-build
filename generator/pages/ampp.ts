@@ -25,7 +25,11 @@ export function generateAMPPPages(dist: string) {
         p.orphan, p.pack_display_value, p.status, p.ex_factory_price, p.atc_code,
         p.start_date, p.end_date, p.leaflet_url, p.spc_url,
         (SELECT json_object('code', a.code, 'name', json(a.name), 'companyActorNr', a.company_actor_nr,
-          'companyName', (SELECT denomination FROM company WHERE actor_nr = a.company_actor_nr))
+          'companyName', (SELECT denomination FROM company WHERE actor_nr = a.company_actor_nr),
+          'vmpCode', a.vmp_code,
+          'vmpName', (SELECT json(v.name) FROM vmp v WHERE v.code = a.vmp_code),
+          'vtmCode', (SELECT v.vtm_code FROM vmp v WHERE v.code = a.vmp_code),
+          'vtmName', (SELECT json(t.name) FROM vtm t WHERE t.code = (SELECT v.vtm_code FROM vmp v WHERE v.code = a.vmp_code)))
          FROM amp a WHERE a.code = p.amp_code) as amp,
         (SELECT json_object('code', atc.code, 'description', atc.description)
          FROM atc_classification atc WHERE atc.code = p.atc_code) as atc,
@@ -117,13 +121,11 @@ function renderAMPP(p: any): string {
 
   return layout(name, `
 <div class="container page-content">
-<nav class="breadcrumbs" aria-label="Breadcrumb" data-pagefind-ignore>
-<a href="/">Home</a><span class="sep">›</span><span aria-current="page">${ml(pName)}</span>
-</nav>
 <div class="detail-grid"><div class="main-col">
 <div class="entity-header" data-pagefind-body>${badge("ampp")}
 <h1 data-pagefind-meta="title">${ml(pName)}</h1>
 <div class="entity-code"><span class="code-label">CTI</span> <code>${esc(p.cti_extended)}</code></div>
+${p.cnk_codes.length > 0 ? `<div class="entity-code">${p.cnk_codes.map((d: any) => `<span><span class="code-label">CNK</span> <code>${esc(d.code)}</code></span>`).join(" ")}</div>` : ""}
 </div>
 ${overview}${ampLink}${atcLink}${cnkHtml}${chapterIVHtml}${docsHtml}
 </div>${sidebar}</div></div>`, { description: `${name} — Medication package.` });

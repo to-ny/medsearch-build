@@ -142,9 +142,6 @@ function renderChapterIV(ch: any): string {
 
   return layout(title, `
 <div class="container page-content">
-<nav class="breadcrumbs" aria-label="Breadcrumb" data-pagefind-ignore>
-<a href="/">Home</a><span class="sep">›</span><span aria-current="page">${esc(title)}</span>
-</nav>
 <div class="detail-grid"><div class="main-col">
 <div class="entity-header" data-pagefind-body>${badge("chapter_iv")}
 <h1 data-pagefind-meta="title">${esc(title)}</h1>

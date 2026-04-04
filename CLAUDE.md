@@ -5,19 +5,35 @@ Private build repo for MedSearch static site generator.
 ## Pipeline
 
 ```
-SAM XML (FAMHP/AFMPS) → SQLite → HTML generator → Pagefind → static site
+SAM XML → SQLite → HTML pages → Pagefind index → static site
+         database     html         search          site
 ```
+
+Each step is a separate Nix derivation. Only `site` (a cheap merge) rebuilds
+when `static/` changes. Pagefind only re-runs when HTML content changes.
 
 ## Commands
 
 ```bash
 nix build .#database          # SAM XML → SQLite
-nix build .#html              # SQLite → HTML pages
-nix build .#site              # HTML → HTML + search index
-nix build                     # Full pipeline
+nix build .#html              # SQLite → HTML pages (content only)
+nix build .#search            # HTML → Pagefind index
+nix build .#site              # Merge html + search + static
+nix build                     # Full pipeline (= .#site)
 nix develop                   # Dev shell with pinned tools
 nix run .#update-sam          # Check for new SAM version
 ```
+
+## Running nix builds
+
+Nix builds can take 10+ minutes. Redirect output to a log file and run in background:
+
+```bash
+nix build .#site --print-build-logs &>/tmp/nix-build.log; echo "EXIT:$?"
+```
+
+Then read `/tmp/nix-build.log` when notified of completion. Do NOT pipe through
+`tail` or use polling loops — they lose output or time out.
 
 ## Updating SAM data
 

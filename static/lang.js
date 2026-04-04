@@ -1,16 +1,38 @@
 // Language toggle
 (function () {
   var LANGS = ['en', 'nl', 'fr', 'de'];
+  var SITE_TITLES = {
+    en: 'Belgium Medication Database',
+    nl: 'Belgische Geneesmiddelendatabank',
+    fr: 'Base de données des médicaments belges',
+    de: 'Belgische Arzneimitteldatenbank'
+  };
   var stored = localStorage.getItem('lang');
   var browserLang = (navigator.language || '').slice(0, 2);
   var lang = LANGS.indexOf(stored) !== -1 ? stored : LANGS.indexOf(browserLang) !== -1 ? browserLang : 'en';
-  document.documentElement.lang = lang;
+
+  function applyLang(l) {
+    document.documentElement.lang = l;
+    var pageTitle = document.documentElement.getAttribute('data-page-title');
+    document.title = (pageTitle || 'MedSearch') + ' | MedSearch — ' + (SITE_TITLES[l] || SITE_TITLES.en);
+    // Notify listeners (e.g. search.js)
+    if (window._langListeners) {
+      window._langListeners.forEach(function (fn) { fn(l); });
+    }
+  }
+
+  window.onLangChange = function (fn) {
+    window._langListeners = window._langListeners || [];
+    window._langListeners.push(fn);
+  };
+
+  applyLang(lang);
   var sel = document.getElementById('lang-select');
   if (sel) {
     sel.value = lang;
     sel.addEventListener('change', function () {
-      document.documentElement.lang = this.value;
       localStorage.setItem('lang', this.value);
+      applyLang(this.value);
     });
   }
 })();

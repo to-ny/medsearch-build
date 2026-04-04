@@ -55,9 +55,6 @@ function renderSubstance(s: any): string {
 
   return layout(name, `
 <div class="container page-content">
-<nav class="breadcrumbs" aria-label="Breadcrumb" data-pagefind-ignore>
-<a href="/">Home</a><span class="sep">›</span><span aria-current="page">${ml(s.name)}</span>
-</nav>
 <div class="detail-grid"><div class="main-col">
 <div class="entity-header" data-pagefind-body>${badge("substance")}
 <h1 data-pagefind-meta="title">${ml(s.name)}</h1>

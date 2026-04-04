@@ -223,7 +223,7 @@ export function layout(
     options?.description ||
     `${title} - MedSearch Belgium Medication Database`;
   return minify(`<!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-page-title="${esc(title)}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -235,9 +235,9 @@ export function layout(
 <header class="header">
 <div class="container header-inner">
 <a href="/" class="logo">
-<div class="logo-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L12 22M2 12L22 12" stroke-linecap="round"/></svg></div>
-<span class="logo-text">MedSearch</span>
+<span class="logo-text">Med<span class="logo-search">Search</span></span>
 </a>
+<span class="header-subtitle">${label("home.subtitle")}</span>
 <nav class="header-nav"></nav>
 <button id="theme-toggle" class="theme-btn" aria-label="Toggle theme">
 <svg class="icon-sun" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z" clip-rule="evenodd"/></svg>
@@ -256,7 +256,8 @@ ${content}
 </main>
 <footer class="footer">
 <div class="container footer-inner">
-<p>${label("footer.disclaimer")}</p>
+<div class="footer-left"><p>${label("footer.disclaimer")}</p><a href="https://www.famhp.be/en" target="_blank" rel="noopener noreferrer" class="sam-badge" title="SAM — Belgium's official medication database by FAMHP/AFMPS"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>Official SAM Data</a></div>
+<p>Made with &#10084;&#65039; by <a href="https://to-ny.github.io/" target="_blank" rel="noopener noreferrer">to-ny</a></p>
 </div>
 </footer>
 <script src="/lang.js"></script>
