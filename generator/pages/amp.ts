@@ -120,8 +120,8 @@ function renderAMP(a: any): string {
   return layout(name, `
 <div class="container page-content">
 <div class="detail-grid"><div class="main-col">
-<div class="entity-header" data-pagefind-body>${badge("amp")}${a.black_triangle ? ' <span class="black-triangle" title="Enhanced Monitoring">▲</span>' : ""}
-<h1 data-pagefind-meta="title">${ml(a.name)}</h1>
+<div class="entity-header">${badge("amp")}${a.black_triangle ? ' <span class="black-triangle" title="Enhanced Monitoring">▲</span>' : ""}
+<h1>${ml(a.name)}</h1>
 <div class="entity-code"><span class="code-label">${label("detail.code")}</span> <code>${esc(a.code)}</code></div>
 </div>
 ${blackTriangle}${overview}${vmpLink}${companyLink}${componentsHtml}${ingredientsHtml}${packagesHtml}

@@ -56,8 +56,8 @@ function renderSubstance(s: any): string {
   return layout(name, `
 <div class="container page-content">
 <div class="detail-grid"><div class="main-col">
-<div class="entity-header" data-pagefind-body>${badge("substance")}
-<h1 data-pagefind-meta="title">${ml(s.name)}</h1>
+<div class="entity-header">${badge("substance")}
+<h1>${ml(s.name)}</h1>
 <div class="entity-code"><span class="code-label">${label("detail.code")}</span> <code>${esc(s.code)}</code></div>
 </div>
 ${overview}${amps}

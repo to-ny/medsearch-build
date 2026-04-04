@@ -143,8 +143,8 @@ function renderChapterIV(ch: any): string {
   return layout(title, `
 <div class="container page-content">
 <div class="detail-grid"><div class="main-col">
-<div class="entity-header" data-pagefind-body>${badge("chapter_iv")}
-<h1 data-pagefind-meta="title">${esc(title)}</h1>
+<div class="entity-header">${badge("chapter_iv")}
+<h1>${esc(title)}</h1>
 ${ch.key_string ? `<p class="entity-code">${ml(ch.key_string)}</p>` : ""}
 </div>
 ${overview}${versesHtml}${productsHtml}

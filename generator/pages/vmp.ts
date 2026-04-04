@@ -83,8 +83,8 @@ function renderVMP(v: any): string {
   return layout(name, `
 <div class="container page-content">
 <div class="detail-grid"><div class="main-col">
-<div class="entity-header" data-pagefind-body>${badge("vmp")}
-<h1 data-pagefind-meta="title">${ml(v.name)}</h1>
+<div class="entity-header">${badge("vmp")}
+<h1>${ml(v.name)}</h1>
 <div class="entity-code"><span class="code-label">${label("detail.code")}</span> <code>${esc(v.code)}</code></div>
 </div>
 ${overview}${vtmLink}${groupLink}${amps}

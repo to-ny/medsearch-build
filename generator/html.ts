@@ -139,12 +139,11 @@ export function badge(type: string): string {
 export function section(
   titleKey: string,
   content: string,
-  opts?: { count?: number; pagefindIgnore?: boolean }
+  opts?: { count?: number }
 ): string {
-  const ignore = opts?.pagefindIgnore !== false ? ' data-pagefind-ignore' : "";
   const countHtml =
     opts?.count != null ? ` <span class="count">(${opts.count})</span>` : "";
-  return `<section class="section"${ignore}><h2 class="section-title">${label(titleKey)}${countHtml}</h2>${content}</section>`;
+  return `<section class="section"><h2 class="section-title">${label(titleKey)}${countHtml}</h2>${content}</section>`;
 }
 
 /** Render a relationship list (VMPs, AMPs, etc.) */
@@ -217,7 +216,7 @@ export function minify(html: string): string {
 export function layout(
   title: string,
   content: string,
-  options?: { description?: string; pagefindMeta?: string }
+  options?: { description?: string }
 ): string {
   const desc =
     options?.description ||

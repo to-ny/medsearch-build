@@ -58,8 +58,8 @@ function renderVMPGroup(vg: any): string {
   return layout(name, `
 <div class="container page-content">
 <div class="detail-grid"><div class="main-col">
-<div class="entity-header" data-pagefind-body>${badge("vmp_group")}
-<h1 data-pagefind-meta="title">${ml(vg.name)}</h1>
+<div class="entity-header">${badge("vmp_group")}
+<h1>${ml(vg.name)}</h1>
 <div class="entity-code"><span class="code-label">${label("detail.code")}</span> <code>${esc(vg.code)}</code></div>
 </div>
 ${warnings.join("")}${overview}${vmps}

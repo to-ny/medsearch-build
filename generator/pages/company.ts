@@ -65,8 +65,8 @@ function renderCompany(c: any): string {
   return layout(name, `
 <div class="container page-content">
 <div class="detail-grid"><div class="main-col">
-<div class="entity-header" data-pagefind-body>${badge("company")}
-<h1 data-pagefind-meta="title">${esc(name)}</h1>
+<div class="entity-header">${badge("company")}
+<h1>${esc(name)}</h1>
 <div class="entity-code"><span class="code-label">${label("codes.actorNr")}</span> <code>${esc(c.actor_nr)}</code></div>
 </div>
 ${contact}${legal}${products}

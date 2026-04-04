@@ -63,7 +63,7 @@ async function main() {
 
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
   console.log(`\n================================`);
-  console.log(`Done in ${elapsed}s. Run 'pagefind --site dist' to build search index.`);
+  console.log(`Done in ${elapsed}s.`);
 }
 
 main().catch((err) => {
