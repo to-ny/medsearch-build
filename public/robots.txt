@@ -1,8 +1,0 @@
-User-agent: *
-Allow: /
-
-# Disallow API and search results with query params
-Disallow: /api/
-Disallow: /*/search?*
-
-Sitemap: https://medsearch.be/sitemap.xml
