@@ -22,6 +22,15 @@
           extension = "zip";
         };
 
+        # Only scripts — changes to generator/ or static/ won't trigger database rebuild
+        databaseSrc = pkgs.lib.cleanSourceWith {
+          src = ./.;
+          filter = path: type:
+            let base = builtins.baseNameOf path; in
+            base == "scripts" || base == "package.json"
+            || pkgs.lib.hasPrefix (toString ./scripts) path;
+        };
+
         # Only generator + scripts — changes to static/ won't trigger html rebuild
         generatorSrc = pkgs.lib.cleanSourceWith {
           src = ./.;
@@ -51,7 +60,7 @@
           # Step 1: SAM XML → SQLite database
           database = pkgs.stdenv.mkDerivation {
             name = "medsearch-database";
-            src = ./.;
+            src = databaseSrc;
             nativeBuildInputs = [ pkgs.bun ];
             buildPhase = ''
               export HOME=$TMPDIR

@@ -145,7 +145,7 @@ function getDb(): Database {
     db = new Database(dbPath);
     db.exec("PRAGMA journal_mode = DELETE");
     db.exec("PRAGMA synchronous = NORMAL");
-    db.exec("PRAGMA foreign_keys = ON");
+    db.exec("PRAGMA foreign_keys = OFF");
     db.exec("PRAGMA cache_size = -64000"); // 64MB cache
   }
   return db;
@@ -1489,10 +1489,19 @@ const UPSERT_BATCH_SIZE = 100;
 // Tables where expired records should be excluded to save storage
 // Expired = end_date is set and is in the past
 const TABLES_TO_FILTER_EXPIRED = new Set([
+  'vtm',
+  'vmp',
+  'vmp_group',
+  'amp',
+  'ampp',
+  'dmpp',
+  'company',
+  'substance',
   'legal_text',
   'legal_reference',
+  'legal_basis',
   'reimbursement_context',
-  'vtm',
+  'chapter_iv_paragraph',
 ]);
 
 /**

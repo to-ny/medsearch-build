@@ -11,6 +11,7 @@ import { generateVMPGroupPages } from "./pages/vmp-group";
 import { generateATCPages } from "./pages/atc";
 import { generateChapterIVPages } from "./pages/chapter-iv";
 import { generateHomePage } from "./pages/home";
+import { generateHelpPage } from "./pages/help";
 import { generateSearchIndexes } from "./indexes";
 
 const DIST = join(import.meta.dir, "..", "dist");
@@ -55,6 +56,7 @@ async function main() {
   generateATCPages(DIST);
   generateChapterIVPages(DIST);
   generateHomePage(DIST, stats);
+  generateHelpPage(DIST);
 
   console.log("\nGenerating search indexes...");
   generateSearchIndexes(DIST);
