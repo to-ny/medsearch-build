@@ -81,6 +81,7 @@
               export HOME=$TMPDIR
               export DB_PATH=${self.packages.${system}.database}
               export SKIP_STATIC=1
+              export SAM_VERSION="${samVersion}"
               mkdir -p static
               bun run generator/index.ts
             '';
