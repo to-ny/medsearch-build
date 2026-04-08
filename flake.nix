@@ -92,7 +92,7 @@
             mkdir -p $out
             cp -r ${self.packages.${system}.html}/* $out/
             chmod -R u+w $out
-            cp -r ${./static}/* $out/
+            cp -r ${./static}/. $out/
           '';
 
           default = self.packages.${system}.site;
