@@ -22,7 +22,7 @@ jobs:
       - name: Resolve latest SAM version
         id: sam
         run: |
-          VERSION=$(curl -sL "https://www.vas.ehealth.fgov.be/websamcivics/samcivics/download/samv2-full-getLastVersion?xsd=5" --max-time 15)
+          VERSION=$(curl -sL "https://www.vas.ehealth.fgov.be/websamcivics/samcivics/download/samv2-full-getLastVersion?xsd=5" --max-time 60 --retry 3 --retry-delay 10)
           if ! [[ "$VERSION" =~ ^[0-9]+$ ]]; then
             echo "ERROR: Could not determine latest version. Got: $VERSION"
             exit 1
