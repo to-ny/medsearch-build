@@ -37,7 +37,7 @@ jobs:
           echo "Hash: $HASH"
 
           sed -i "s/samVersion = \".*\"/samVersion = \"$VERSION\"/" flake.nix
-          sed -i "s/samHash = \".*\"/samHash = \"$HASH\"/" flake.nix
+          sed -i "s|samHash = \".*\"|samHash = \"$HASH\"|" flake.nix
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Build site
