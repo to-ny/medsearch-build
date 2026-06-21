@@ -11,52 +11,65 @@ export function generateAMPPages(dist: string) {
   const dir = join(dist, "medications");
   mkdirSync(dir, { recursive: true });
 
-  const rows = queryAll(`
-    SELECT a.code, a.name, a.abbreviated_name, a.official_name, a.vmp_code,
-      a.company_actor_nr, a.black_triangle, a.medicine_type, a.status, a.start_date, a.end_date,
-      (SELECT json_object('code', vmp.code, 'name', json(vmp.name), 'vtmCode', vmp.vtm_code,
-        'vtmName', (SELECT name FROM vtm WHERE vtm.code = vmp.vtm_code))
-       FROM vmp WHERE vmp.code = a.vmp_code) as vmp,
-      (SELECT json_object('actorNr', c.actor_nr, 'denomination', c.denomination, 'city', c.city, 'countryCode', c.country_code)
-       FROM company c WHERE c.actor_nr = a.company_actor_nr) as company,
-      (SELECT COALESCE(json_group_array(json_object(
-        'substanceCode', i.substance_code, 'substanceName', json(s.name),
-        'strengthValue', i.strength_value, 'strengthUnit', i.strength_unit, 'strengthDescription', i.strength_description
-      )), '[]')
-      FROM amp_ingredient i LEFT JOIN substance s ON s.code = i.substance_code
-      WHERE i.amp_code = a.code
-      ORDER BY i.component_sequence_nr, i.rank) as ingredients,
-      (SELECT COALESCE(json_group_array(json_object(
-        'sequenceNr', ac.sequence_nr,
-        'formCode', ac.pharmaceutical_form_code, 'formName', json(pf.name),
-        'routeCode', ac.route_of_administration_code, 'routeName', json(ra.name)
-      )), '[]')
-      FROM amp_component ac
-      LEFT JOIN pharmaceutical_form pf ON pf.code = ac.pharmaceutical_form_code
-      LEFT JOIN route_of_administration ra ON ra.code = ac.route_of_administration_code
-      WHERE ac.amp_code = a.code
-      ORDER BY ac.sequence_nr) as components,
-      (SELECT COALESCE(json_group_array(json_object(
-        'ctiExtended', ampp.cti_extended, 'prescriptionName', json(ampp.prescription_name),
-        'packDisplayValue', ampp.pack_display_value, 'status', ampp.status
-      )), '[]')
-      FROM ampp WHERE ampp.amp_code = a.code AND (ampp.end_date IS NULL OR ampp.end_date > date('now'))
-      ORDER BY json_extract(ampp.prescription_name, '$.en')) as packages,
-      (SELECT MIN(d.price) FROM dmpp d JOIN ampp ON ampp.cti_extended = d.ampp_cti_extended
-       WHERE ampp.amp_code = a.code AND d.price IS NOT NULL
-       AND (d.end_date IS NULL OR d.end_date > date('now')) AND (ampp.end_date IS NULL OR ampp.end_date > date('now'))) as min_price,
-      (SELECT MAX(d.price) FROM dmpp d JOIN ampp ON ampp.cti_extended = d.ampp_cti_extended
-       WHERE ampp.amp_code = a.code AND d.price IS NOT NULL
-       AND (d.end_date IS NULL OR d.end_date > date('now')) AND (ampp.end_date IS NULL OR ampp.end_date > date('now'))) as max_price
-    FROM amp a WHERE a.end_date IS NULL OR a.end_date > date('now') ORDER BY json_extract(a.name, '$.en')`);
+  // Batch in chunks of 20K to manage memory
+  const countResult = queryAll(
+    `SELECT count(*) as c FROM amp WHERE end_date IS NULL OR end_date > date('now')`
+  );
+  const total = countResult[0].c;
+  const CHUNK = 20000;
+  let generated = 0;
 
-  for (const amp of rows) {
-    const slug = entitySlug(amp.name, amp.code);
-    const pageDir = join(dir, slug);
-    mkdirSync(pageDir, { recursive: true });
-    writeFileSync(join(pageDir, "index.html"), renderAMP(amp));
+  for (let offset = 0; offset < total; offset += CHUNK) {
+    const rows = queryAll(`
+      SELECT a.code, a.name, a.abbreviated_name, a.official_name, a.vmp_code,
+        a.company_actor_nr, a.black_triangle, a.medicine_type, a.status, a.start_date, a.end_date,
+        (SELECT json_object('code', vmp.code, 'name', json(vmp.name), 'vtmCode', vmp.vtm_code,
+          'vtmName', (SELECT name FROM vtm WHERE vmp.code = vmp.vtm_code))
+         FROM vmp WHERE vmp.code = a.vmp_code) as vmp,
+        (SELECT json_object('actorNr', c.actor_nr, 'denomination', c.denomination, 'city', c.city, 'countryCode', c.country_code)
+         FROM company c WHERE c.actor_nr = a.company_actor_nr) as company,
+        (SELECT COALESCE(json_group_array(json_object(
+          'substanceCode', i.substance_code, 'substanceName', json(s.name),
+          'strengthValue', i.strength_value, 'strengthUnit', i.strength_unit, 'strengthDescription', i.strength_description
+        )), '[]')
+        FROM amp_ingredient i LEFT JOIN substance s ON s.code = i.substance_code
+        WHERE i.amp_code = a.code
+        ORDER BY i.component_sequence_nr, i.rank) as ingredients,
+        (SELECT COALESCE(json_group_array(json_object(
+          'sequenceNr', ac.sequence_nr,
+          'formCode', ac.pharmaceutical_form_code, 'formName', json(pf.name),
+          'routeCode', ac.route_of_administration_code, 'routeName', json(ra.name)
+        )), '[]')
+        FROM amp_component ac
+        LEFT JOIN pharmaceutical_form pf ON pf.code = ac.pharmaceutical_form_code
+        LEFT JOIN route_of_administration ra ON ra.code = ac.route_of_administration_code
+        WHERE ac.amp_code = a.code
+        ORDER BY ac.sequence_nr) as components,
+        (SELECT COALESCE(json_group_array(json_object(
+          'ctiExtended', ampp.cti_extended, 'prescriptionName', json(ampp.prescription_name),
+          'packDisplayValue', ampp.pack_display_value, 'status', ampp.status
+        )), '[]')
+        FROM ampp WHERE ampp.amp_code = a.code AND (ampp.end_date IS NULL OR ampp.end_date > date('now'))
+        ORDER BY json_extract(ampp.prescription_name, '$.en')) as packages,
+        (SELECT MIN(d.price) FROM dmpp d JOIN ampp ON ampp.cti_extended = d.ampp_cti_extended
+         WHERE ampp.amp_code = a.code AND d.price IS NOT NULL
+         AND (d.end_date IS NULL OR d.end_date > date('now')) AND (ampp.end_date IS NULL OR ampp.end_date > date('now'))) as min_price,
+        (SELECT MAX(d.price) FROM dmpp d JOIN ampp ON ampp.cti_extended = d.ampp_cti_extended
+         WHERE ampp.amp_code = a.code AND d.price IS NOT NULL
+         AND (d.end_date IS NULL OR d.end_date > date('now')) AND (ampp.end_date IS NULL OR ampp.end_date > date('now'))) as max_price
+      FROM amp a WHERE a.end_date IS NULL OR a.end_date > date('now') ORDER BY json_extract(a.name, '$.en')
+      LIMIT ${CHUNK} OFFSET ${offset}`);
+
+    for (const amp of rows) {
+      const slug = entitySlug(amp.name, amp.code);
+      const pageDir = join(dir, slug);
+      mkdirSync(pageDir, { recursive: true });
+      writeFileSync(join(pageDir, "index.html"), renderAMP(amp));
+    }
+    generated += rows.length;
+    process.stdout.write(`  ${generated}/${total} AMP pages\r`);
   }
-  console.log(`  ${rows.length} AMP pages`);
+  console.log(`  ${generated} AMP pages    `);
 }
 
 function renderAMP(a: any): string {

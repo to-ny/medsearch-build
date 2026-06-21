@@ -21,8 +21,9 @@ export function generateSearchIndexes(dist: string) {
 
   for (const t of types) {
     const rows = t.fn();
-    writeFileSync(join(dir, `${t.key}.json`), JSON.stringify(rows));
-    console.log(`  ${t.key}: ${rows.length} entries (${(JSON.stringify(rows).length / 1024).toFixed(0)}KB)`);
+    const json = JSON.stringify(rows);
+    writeFileSync(join(dir, `${t.key}.json`), json);
+    console.log(`  ${t.key}: ${rows.length} entries (${(json.length / 1024).toFixed(0)}KB)`);
   }
 }
 
