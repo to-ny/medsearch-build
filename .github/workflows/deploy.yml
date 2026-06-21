@@ -60,6 +60,7 @@ jobs:
           # everything. magic-nix-cache has already uploaded store paths to the
           # GitHub Actions cache, so dropping them here is safe.
           cp -rL result /tmp/site
+          chmod -R u+w /tmp/site
           # First GC: removes build-only deps (SAM XML, Bun, SQLite, intermediates).
           # `result` is a GC root, so the site output is kept.
           nix-collect-garbage
