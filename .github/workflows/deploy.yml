@@ -52,16 +52,37 @@ jobs:
             tail -n 500 /tmp/nix-build.log
             exit $EXIT
           fi
+          df -h /
+
+      - name: Free disk space
+        run: |
+          # Materialize site output out of the Nix store, then garbage-collect
+          # everything. magic-nix-cache has already uploaded store paths to the
+          # GitHub Actions cache, so dropping them here is safe.
+          cp -rL result /tmp/site
+          # First GC: removes build-only deps (SAM XML, Bun, SQLite, intermediates).
+          # `result` is a GC root, so the site output is kept.
+          nix-collect-garbage
+          df -h /
+          # Drop the GC root and collect the site output too.
+          rm result
+          nix-collect-garbage
+          df -h /
 
       - name: Deploy to medsearch
         run: |
-          git clone https://x-access-token:${{ secrets.DEPLOY_TOKEN }}@github.com/to-ny/medsearch.git _public
+          # Shallow clone without checkout — we only need .git and README.md.
+          # The old site content is replaced wholesale, so checking out 2.6 GB
+          # of it only to delete it is wasted disk and time.
+          git clone --depth=1 --no-checkout https://x-access-token:${{ secrets.DEPLOY_TOKEN }}@github.com/to-ny/medsearch.git _public
           cd _public
-          # Wipe everything except .git and README.md
-          find . -maxdepth 1 -not -name '.git' -not -name '.' -not -name 'README.md' -exec rm -rf {} +
-          # Site content into docs/
+          git checkout HEAD -- README.md
+          df -h .
+          # New site content into docs/
           mkdir -p docs
-          cp -rL ../result/. docs
+          cp -rL /tmp/site/. docs
+          rm -rf /tmp/site
+          df -h .
           git add -A
           if git diff --cached --quiet; then
             echo "No changes to deploy"
