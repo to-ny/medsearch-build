@@ -40,12 +40,10 @@ CREATE INDEX IF NOT EXISTS idx_vmp_vtm ON vmp (vtm_code);
 CREATE INDEX IF NOT EXISTS idx_vmp_group ON vmp (vmp_group_code);
 CREATE INDEX IF NOT EXISTS idx_vmp_validity ON vmp (start_date, end_date);
 
--- Substance
+-- Substance — SAM provides no validity period for substances, only code + name
 CREATE TABLE IF NOT EXISTS substance (
   code TEXT PRIMARY KEY,
   name TEXT NOT NULL,
-  start_date TEXT,
-  end_date TEXT,
   sync_id INTEGER
 );
 
@@ -197,15 +195,6 @@ CREATE TABLE IF NOT EXISTS reimbursement_context (
 CREATE UNIQUE INDEX IF NOT EXISTS uq_reimbursement_natural
   ON reimbursement_context (dmpp_code, delivery_environment, legal_reference_path);
 
--- Copayment
-CREATE TABLE IF NOT EXISTS copayment (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  reimbursement_context_id INTEGER NOT NULL REFERENCES reimbursement_context(id) ON DELETE CASCADE,
-  regimen_type TEXT NOT NULL,
-  fee_amount REAL,
-  reimbursement_amount REAL
-);
-
 -- Chapter IV Paragraph
 CREATE TABLE IF NOT EXISTS chapter_iv_paragraph (
   chapter_name TEXT NOT NULL,
@@ -221,24 +210,6 @@ CREATE TABLE IF NOT EXISTS chapter_iv_paragraph (
   PRIMARY KEY (chapter_name, paragraph_name)
 );
 
--- Chapter IV Verse
-CREATE TABLE IF NOT EXISTS chapter_iv_verse (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  chapter_name TEXT NOT NULL,
-  paragraph_name TEXT NOT NULL,
-  verse_seq INTEGER NOT NULL,
-  verse_num INTEGER NOT NULL,
-  verse_seq_parent INTEGER DEFAULT 0,
-  verse_level INTEGER DEFAULT 1,
-  text TEXT,
-  request_type TEXT,
-  agreement_term_quantity INTEGER,
-  agreement_term_unit TEXT,
-  start_date TEXT,
-  FOREIGN KEY (chapter_name, paragraph_name) REFERENCES chapter_iv_paragraph(chapter_name, paragraph_name) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS idx_chapter_iv_verse_para ON chapter_iv_verse (chapter_name, paragraph_name);
-
 -- DMPP Chapter IV link
 CREATE TABLE IF NOT EXISTS dmpp_chapter_iv (
   dmpp_code TEXT NOT NULL,
@@ -249,60 +220,6 @@ CREATE TABLE IF NOT EXISTS dmpp_chapter_iv (
   PRIMARY KEY (dmpp_code, delivery_environment, chapter_name, paragraph_name),
   FOREIGN KEY (dmpp_code, delivery_environment) REFERENCES dmpp(code, delivery_environment) ON DELETE CASCADE,
   FOREIGN KEY (chapter_name, paragraph_name) REFERENCES chapter_iv_paragraph(chapter_name, paragraph_name) ON DELETE CASCADE
-);
-
--- Standard Dosage
-CREATE TABLE IF NOT EXISTS standard_dosage (
-  code TEXT PRIMARY KEY,
-  vmp_group_code TEXT REFERENCES vmp_group(code),
-  target_group TEXT NOT NULL,
-  kidney_failure_class INTEGER,
-  liver_failure_class INTEGER,
-  treatment_duration_type TEXT NOT NULL,
-  temporality_duration_value REAL,
-  temporality_duration_unit TEXT,
-  temporality_user_provided INTEGER,
-  temporality_note TEXT,
-  quantity REAL,
-  quantity_denominator REAL,
-  quantity_range_lower REAL,
-  quantity_range_upper REAL,
-  administration_frequency_quantity INTEGER,
-  administration_frequency_is_max INTEGER,
-  administration_frequency_timeframe_value REAL,
-  administration_frequency_timeframe_unit TEXT,
-  maximum_administration_quantity REAL,
-  maximum_daily_quantity_value REAL,
-  maximum_daily_quantity_unit TEXT,
-  maximum_daily_quantity_multiplier REAL,
-  textual_dosage TEXT,
-  supplementary_info TEXT,
-  route_specification TEXT,
-  indication_code TEXT,
-  indication_name TEXT,
-  route_of_administration_code TEXT,
-  start_date TEXT,
-  end_date TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_standard_dosage_vmp_group ON standard_dosage (vmp_group_code);
-
--- Dosage Parameter
-CREATE TABLE IF NOT EXISTS dosage_parameter (
-  code TEXT PRIMARY KEY,
-  name TEXT,
-  definition TEXT,
-  standard_unit TEXT
-);
-
--- Dosage Parameter Bounds
-CREATE TABLE IF NOT EXISTS dosage_parameter_bounds (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  dosage_code TEXT NOT NULL REFERENCES standard_dosage(code) ON DELETE CASCADE,
-  parameter_code TEXT NOT NULL REFERENCES dosage_parameter(code),
-  lower_bound_value REAL,
-  lower_bound_unit TEXT,
-  upper_bound_value REAL,
-  upper_bound_unit TEXT
 );
 
 -- Legal Basis
@@ -349,16 +266,3 @@ CREATE TABLE IF NOT EXISTS legal_text (
   sync_id INTEGER
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_legal_text_natural ON legal_text (legal_basis_key, legal_reference_path, key);
-
--- Sync Metadata
-CREATE TABLE IF NOT EXISTS sync_metadata (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  sync_type TEXT NOT NULL,
-  started_at TEXT NOT NULL DEFAULT (datetime('now')),
-  completed_at TEXT,
-  status TEXT NOT NULL DEFAULT 'running',
-  source_url TEXT,
-  source_date TEXT,
-  record_counts TEXT,
-  error_message TEXT
-);

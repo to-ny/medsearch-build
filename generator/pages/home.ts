@@ -9,6 +9,9 @@ interface Stats {
   ampp: number;
   company: number;
   substance: number;
+  vmp_group: number;
+  atc: number;
+  chapter_iv: number;
 }
 
 export function generateHomePage(dist: string, stats: Stats) {

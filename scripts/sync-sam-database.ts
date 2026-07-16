@@ -143,7 +143,11 @@ function getDb(): Database {
       mkdirSync(dir, { recursive: true });
     }
     db = new Database(dbPath);
-    db.exec("PRAGMA journal_mode = DELETE");
+    // Keep journal_mode = DELETE: bun:sqlite does not auto-checkpoint WAL on
+// db.close(), which previously caused data loss in the Nix build (the DB was
+// copied before the -wal file was merged). WAL benchmarks ~13% faster on a
+// ~137s sync but reintroduces that risk — not worth it. See commit 6140314.
+db.exec("PRAGMA journal_mode = DELETE");
     db.exec("PRAGMA synchronous = NORMAL");
     db.exec("PRAGMA foreign_keys = OFF");
     db.exec("PRAGMA cache_size = -64000"); // 64MB cache
@@ -160,7 +164,8 @@ function query(text: string, params?: unknown[]) {
   return { rows: [], rowCount: result.changes };
 }
 
-function queryWithRetry(text: string, params?: unknown[]) {
+/** Wrapper around query — named without "retry" since no retry happens here. */
+function queryOnce(text: string, params?: unknown[]) {
   return query(text, params);
 }
 
@@ -1109,8 +1114,6 @@ function transformSubstance(element: XmlElement): ParsedRecord | null {
     data: {
       code,
       name: JSON.stringify(name),
-      start_date: null,
-      end_date: null,
       sync_id: currentSyncId,
     },
   };
@@ -1488,6 +1491,7 @@ const UPSERT_BATCH_SIZE = 100;
 
 // Tables where expired records should be excluded to save storage
 // Expired = end_date is set and is in the past
+// (substance omitted — SAM provides no validity period for substances)
 const TABLES_TO_FILTER_EXPIRED = new Set([
   'vtm',
   'vmp',
@@ -1496,7 +1500,6 @@ const TABLES_TO_FILTER_EXPIRED = new Set([
   'ampp',
   'dmpp',
   'company',
-  'substance',
   'legal_text',
   'legal_reference',
   'legal_basis',
@@ -1640,7 +1643,7 @@ function importRecords(
 
         try {
           const upsertSql = buildBatchedUpsertQuery(table, columns, batch.length);
-          queryWithRetry(upsertSql, allValues);
+          queryOnce(upsertSql, allValues);
           successfulUpserts += batch.length;
         } catch (error) {
           // If batch fails, fall back to individual inserts to identify problematic records
@@ -1651,7 +1654,7 @@ function importRecords(
             const values = columns.map(c => record.data[c]);
             try {
               const singleSql = buildBatchedUpsertQuery(table, columns, 1);
-              queryWithRetry(singleSql, values);
+              queryOnce(singleSql, values);
               successfulUpserts++;
             } catch (innerError) {
               if (verbose) {
@@ -1750,7 +1753,7 @@ function sweepStaleRecords(dryRun: boolean): void {
     }
 
     try {
-      const result = queryWithRetry(
+      const result = queryOnce(
         `DELETE FROM ${table} WHERE sync_id IS NULL OR sync_id != ?`,
         [currentSyncId]
       );
@@ -1860,14 +1863,8 @@ async function main(): Promise<void> {
       getDb().exec(schemaSQL);
       console.log('   [OK] Schema loaded');
     } else {
-      // Fall back to src/server/db/schema.sql
-      const fallbackPath = join(dirname(new URL(import.meta.url).pathname), '..', 'src', 'server', 'db', 'schema.sql');
-      if (existsSync(fallbackPath)) {
-        console.log('   Loading schema from src/server/db/schema.sql...');
-        const schemaSQL = readFileSync(fallbackPath, 'utf-8');
-        getDb().exec(schemaSQL);
-        console.log('   [OK] Schema loaded');
-      }
+      console.log('   [ERROR] scripts/schema.sql not found — cannot continue');
+      process.exit(1);
     }
   }
 

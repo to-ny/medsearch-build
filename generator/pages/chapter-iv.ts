@@ -104,7 +104,6 @@ const PROCESS_TYPES: Record<string, string> = {
 };
 
 const MOD_STATUSES: Record<string, string> = { E: "Active", C: "Modified", S: "Ended" };
-const TERM_UNITS: Record<string, string> = { D: "days", W: "weeks", M: "months", Y: "years" };
 
 function renderChapterIV(ch: any): string {
   const keyStr = localized(ch.key_string, "en") || `§${ch.paragraph_name}`;
@@ -154,11 +153,6 @@ ${overview}${versesHtml}${productsHtml}
 function renderVerseTree(verses: any[]): string {
   return `<div class="verse-tree">${verses.map((v) => {
     const text = v.text ? localized(v.text, "en") || "" : "";
-    const meta: string[] = [];
-    if (v.requestType === "N") meta.push('<span class="verse-tag">New</span>');
-    if (v.requestType === "P") meta.push('<span class="verse-tag">Prolongation</span>');
-    if (v.agreementTermQuantity && v.agreementTermUnit)
-      meta.push(`<span class="verse-tag">${v.agreementTermQuantity} ${TERM_UNITS[v.agreementTermUnit] || v.agreementTermUnit}</span>`);
-    return `<div class="verse-item" style="margin-left:${((v.verseLevel || 1) - 1) * 1}rem">${text ? ml(v.text) : ""}${meta.length ? `<span class="verse-meta">${meta.join("")}</span>` : ""}</div>`;
+    return `<div class="verse-item" style="margin-left:${((v.verseLevel || 1) - 1) * 1}rem">${text ? ml(v.text) : ""}</div>`;
   }).join("")}</div>`;
 }

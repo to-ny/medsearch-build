@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import { queryAll } from "./db";
-import { localized, entitySlug } from "./html";
+import { localized, entitySlug, entityUrl } from "./html";
 
 export function generateSearchIndexes(dist: string) {
   const dir = join(dist, "_indexes");
@@ -119,7 +119,7 @@ function indexCompany() {
   `).map(r => {
     const entry: Record<string, unknown> = {
       id: r.actor_nr, n: r.denomination || '', code: r.actor_nr,
-      url: `/companies/${r.denomination ? r.denomination.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") : ""}_${r.actor_nr}/`,
+      url: entityUrl.company(r.denomination || "", r.actor_nr),
     };
     if (r.country_code) entry.sub = r.country_code;
     if (r.product_count) entry.count = r.product_count;
@@ -131,7 +131,7 @@ function indexSubstance() {
   return queryAll(`
     SELECT s.code, s.name,
       (SELECT count(*) FROM amp_ingredient ai WHERE ai.substance_code = s.code) as usage_count
-    FROM substance s WHERE s.end_date IS NULL OR s.end_date > date('now')
+    FROM substance s
     ORDER BY json_extract(s.name, '$.en'), s.code
   `).map(r => {
     const entry: Record<string, unknown> = {

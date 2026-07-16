@@ -87,8 +87,11 @@
         indexCache[type] = data;
         msCache[type] = buildMiniSearch(type, data);
         cb(msCache[type]);
+      } else {
+        cb(null);
       }
     };
+    xhr.onerror = function () { cb(null); };
     xhr.send();
   }
 
@@ -101,6 +104,16 @@
       return;
     }
     loadIndex(currentType, function (ms) {
+      if (!ms) {
+        resultsEl.innerHTML = '<div class="search-empty">' + esc(ml({
+          en: 'Search index failed to load',
+          nl: 'Zoekindex kon niet worden geladen',
+          fr: 'Échec du chargement de l\'index de recherche',
+          de: 'Suchindex konnte nicht geladen werden',
+        })) + '</div>';
+        countEl.textContent = '';
+        return;
+      }
       var results = ms.search(query, { prefix: true, fuzzy: 0.2 });
       var top = results.slice(0, 30);
       countEl.textContent = results.length + ' ' + ml(typeConfig(currentType).label).toLowerCase();
@@ -131,11 +144,10 @@
   function renderCard(r, type, query) {
     var cfg = typeConfig(type);
     var name = r.n || '';
-    var badge = '';
 
     var meta = [];
     if (r.code) meta.push('<span class="result-code">' + esc(r.code) + '</span>');
-    if (r.cnk) meta.push('<span class="result-code">CNK ' + esc(r.cnk.split(' ')[0]) + '</span>');
+    if (r.cnk) meta.push('<span class="result-code">' + ml({ en: 'CNK', nl: 'CNK', fr: 'CNK', de: 'CNK' }) + ' ' + esc(r.cnk.split(' ')[0]) + '</span>');
 
     var details = [];
     if (r.sub) details.push('<span class="result-sub">' + highlight(r.sub, query) + '</span>');
@@ -145,13 +157,12 @@
 
     var right = [];
     if (r.price != null) right.push('<span class="result-price">' + formatPrice(r.price) + '</span>');
-    if (r.reimb) right.push('<span class="result-reimb">Reimbursable</span>');
-    if (r.bt) right.push('<span class="result-bt" title="Enhanced monitoring">▲</span>');
-    if (r.count) right.push('<span class="result-count">' + r.count + ' products</span>');
+    if (r.reimb) right.push('<span class="result-reimb">' + esc(ml({ en: 'Reimbursable', nl: 'Terugbetaalbaar', fr: 'Remboursable', de: 'Erstattungsfähig' })) + '</span>');
+    if (r.bt) right.push('<span class="result-bt" title="' + esc(ml({ en: 'Enhanced monitoring', nl: 'Aanvullende monitoring', fr: 'Surveillance renforcée', de: 'Zusätzliche Überwachung' })) + '">▲</span>');
+    if (r.count) right.push('<span class="result-count">' + r.count + ' ' + esc(ml({ en: 'products', nl: 'producten', fr: 'produits', de: 'Produkte' })) + '</span>');
 
     return '<a href="' + esc(r.url) + '" class="result-card">'
       + '<div class="result-left">'
-      + badge
       + '<div class="result-info">'
       + '<span class="result-name">' + highlight(name, query) + '</span>'
       + (meta.length ? '<span class="result-meta">' + meta.join(' ') + '</span>' : '')

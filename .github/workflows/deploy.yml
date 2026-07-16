@@ -11,15 +11,18 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/nix-installer-action@v22
 
-      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@v14
 
       - name: Resolve latest SAM version
         id: sam
@@ -93,3 +96,20 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git commit -m "SAM v2 export v${{ steps.sam.outputs.version }}"
           git push
+
+      - name: Commit SAM version bump back to build repo
+        working-directory: ${{ github.workspace }}
+        run: |
+          # Traceability: persist the resolved samVersion/samHash so future
+          # cold builds skip re-hashing and the build repo records which SAM
+          # version is currently live.
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${GITHUB_REPOSITORY}.git"
+          git add flake.nix
+          if git diff --cached --quiet; then
+            echo "flake.nix unchanged — skipping back-commit"
+          else
+            git commit -m "Bump SAM version to ${{ steps.sam.outputs.version }}"
+            git push
+          fi

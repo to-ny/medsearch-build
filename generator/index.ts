@@ -39,7 +39,7 @@ async function main() {
       (SELECT count(*) FROM amp WHERE end_date IS NULL OR end_date > date('now')) as amp,
       (SELECT count(*) FROM ampp WHERE end_date IS NULL OR end_date > date('now')) as ampp,
       (SELECT count(*) FROM company WHERE end_date IS NULL OR end_date > date('now')) as company,
-      (SELECT count(*) FROM substance WHERE end_date IS NULL OR end_date > date('now')) as substance,
+      (SELECT count(*) FROM substance) as substance,
       (SELECT count(*) FROM vmp_group WHERE end_date IS NULL OR end_date > date('now')) as vmp_group,
       (SELECT count(*) FROM atc_classification) as atc,
       (SELECT count(*) FROM chapter_iv_paragraph WHERE end_date IS NULL OR end_date > date('now')) as chapter_iv

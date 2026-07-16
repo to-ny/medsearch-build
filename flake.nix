@@ -22,6 +22,14 @@
           extension = "zip";
         };
 
+        # MiniSearch UMD bundle served as /minisearch.min.js.
+        # Pinned via SRI hash: bump minisearchVersion + minisearchHash together.
+        minisearchVersion = "7.2.0";
+        minisearchJs = pkgs.fetchurl {
+          url = "https://cdn.jsdelivr.net/npm/minisearch@${minisearchVersion}/dist/umd/index.min.js";
+          hash = "sha256-igW0J4XbRI8sGeJKaiEHIEyCVWX+T5WqabeWUrryboI=";
+        };
+
         # Only scripts — changes to generator/ or static/ won't trigger database rebuild
         databaseSrc = pkgs.lib.cleanSourceWith {
           src = ./.;
@@ -94,6 +102,12 @@
             cp -r ${self.packages.${system}.html}/* $out/
             chmod -R u+w $out
             cp -r ${./static}/. $out/
+            # Overwrite the vendored minisearch.min.js with the SRI-pinned
+            # Nix fetchurl build, so the deployed bundle is byte-for-byte
+            # reproducible. `rm -f` first because cp -r from the nix store
+            # leaves the destination read-only.
+            rm -f $out/minisearch.min.js
+            cp ${minisearchJs} $out/minisearch.min.js
           '';
 
           default = self.packages.${system}.site;

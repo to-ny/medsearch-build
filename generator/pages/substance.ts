@@ -3,7 +3,7 @@ import { join } from "path";
 import { queryAll } from "../db";
 import {
   layout, esc, ml, label, badge, entitySlug, entityUrl,
-  localized, relationshipList, infoRow, summaryCard, formatDate, section,
+  localized, relationshipList, infoRow, summaryCard, section,
 } from "../html";
 
 export function generateSubstancePages(dist: string) {
@@ -12,7 +12,7 @@ export function generateSubstancePages(dist: string) {
   mkdirSync(dir, { recursive: true });
 
   const rows = queryAll(`
-    SELECT s.code, s.name, s.start_date, s.end_date,
+    SELECT s.code, s.name,
       (SELECT COALESCE(json_group_array(json_object(
         'code', a.code, 'name', json(a.name), 'companyName', c.denomination
       )), '[]')
@@ -20,7 +20,7 @@ export function generateSubstancePages(dist: string) {
       LEFT JOIN company c ON c.actor_nr = a.company_actor_nr
       WHERE i.substance_code = s.code AND (a.end_date IS NULL OR a.end_date > date('now'))
       ORDER BY json_extract(a.name, '$.en')) as used_in_amps
-    FROM substance s WHERE s.end_date IS NULL OR s.end_date > date('now')
+    FROM substance s
     ORDER BY json_extract(s.name, '$.en')`);
 
   for (const sub of rows) {
@@ -39,9 +39,8 @@ function renderSubstance(s: any): string {
     .filter((l) => s.name[l] && s.name[l] !== name)
     .map((l) => infoRow(`languages.${l === "nl" ? "dutch" : l === "fr" ? "french" : l === "en" ? "english" : "german"}`, esc(s.name[l])))
     .join("");
-  const hasOverview = s.start_date || s.end_date || langVariants;
-  const overview = hasOverview
-    ? section("detail.overview", `<dl class="info-list">${s.start_date || s.end_date ? infoRow("detail.validity", `${formatDate(s.start_date)} — ${s.end_date ? formatDate(s.end_date) : "∞"}`) : ""}${langVariants}</dl>`)
+  const overview = langVariants
+    ? section("detail.overview", `<dl class="info-list">${langVariants}</dl>`)
     : "";
 
   const amps = relationshipList("detail.productsContainingIngredient", s.used_in_amps.map((a: any) => ({
@@ -50,7 +49,6 @@ function renderSubstance(s: any): string {
 
   const sidebar = summaryCard([
     { labelKey: "detail.brandProducts", value: String(s.used_in_amps.length) },
-    { labelKey: "detail.validity", value: s.end_date && new Date(s.end_date) < new Date() ? label("sidebar.expired") : label("sidebar.active") },
   ]);
 
   return layout(name, `
