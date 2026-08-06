@@ -17,7 +17,22 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        with:
+          # Reclaim ~25-30 GB of preinstalled toolchains the build never uses,
+          # so the full Nix store (SAM export + database + html + 2.6 GB site)
+          # plus the deploy clone fit on the runner's root filesystem.
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: false
+
       - uses: actions/checkout@v4
 
       - uses: DeterminateSystems/nix-installer-action@v22
@@ -27,7 +42,8 @@ jobs:
       - name: Resolve latest SAM version
         id: sam
         run: |
-          VERSION=$(curl -sL "https://www.vas.ehealth.fgov.be/websamcivics/samcivics/download/samv2-full-getLastVersion?xsd=5" --max-time 60 --retry 3 --retry-delay 10)
+          VERSION=$(curl -sL "https://www.vas.ehealth.fgov.be/websamcivics/samcivics/download/samv2-full-getLastVersion?xsd=5" \
+            --connect-timeout 30 --max-time 120 --retry 5 --retry-delay 15 --retry-all-errors)
           if ! [[ "$VERSION" =~ ^[0-9]+$ ]]; then
             echo "ERROR: Could not determine latest version. Got: $VERSION"
             exit 1
@@ -57,22 +73,6 @@ jobs:
           fi
           df -h /
 
-      - name: Free disk space
-        run: |
-          # Materialize site output out of the Nix store, then garbage-collect
-          # everything. magic-nix-cache has already uploaded store paths to the
-          # GitHub Actions cache, so dropping them here is safe.
-          cp -rL result /tmp/site
-          chmod -R u+w /tmp/site
-          # First GC: removes build-only deps (SAM XML, Bun, SQLite, intermediates).
-          # `result` is a GC root, so the site output is kept.
-          nix-collect-garbage
-          df -h /
-          # Drop the GC root and collect the site output too.
-          rm result
-          nix-collect-garbage
-          df -h /
-
       - name: Deploy to medsearch
         run: |
           # Shallow clone without checkout — we only need .git and README.md.
@@ -82,10 +82,12 @@ jobs:
           cd _public
           git checkout HEAD -- README.md
           df -h .
-          # New site content into docs/
+          # New site content straight from the Nix store into docs/ — a single
+          # copy (no /tmp intermediate). The store paths stay intact so
+          # magic-nix-cache can upload them in its post-job step.
           mkdir -p docs
-          cp -rL /tmp/site/. docs
-          rm -rf /tmp/site
+          cp -rL "$GITHUB_WORKSPACE/result/." docs
+          chmod -R u+w docs
           df -h .
           git add -A
           if git diff --cached --quiet; then
