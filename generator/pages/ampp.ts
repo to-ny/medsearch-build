@@ -2,9 +2,10 @@ import { mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import { queryAll } from "../db";
 import {
-  layout, esc, ml, label, badge, entitySlug, entityUrl, formatPrice,
-  localized, infoRow, summaryCard, formatDate, section,
+  layout, esc, ml, label, entitySlug, entityUrl, formatPrice, localized,
+  infoRow, formatDate, isExpired, section, entityHeader, infoSection, sidebar, statusPills, breadcrumb,
 } from "../html";
+import { buildRelated, type RelatedResult } from "../related";
 
 export function generateAMPPPages(dist: string) {
   console.log("\nGenerating AMPP pages...");
@@ -59,7 +60,22 @@ export function generateAMPPPages(dist: string) {
       const slug = entitySlug(pName, ampp.cti_extended);
       const pageDir = join(dir, slug);
       mkdirSync(pageDir, { recursive: true });
-      writeFileSync(join(pageDir, "index.html"), renderAMPP(ampp));
+      const chapterParas = [...new Map(ampp.chapter_iv.map((c: any) => [`${c.chapterName}-${c.paragraphName}`, c])).values()];
+      const related = buildRelated({
+        entityDir: pageDir,
+        entityBaseUrl: entityUrl.ampp(pName, ampp.cti_extended),
+        entityName: localized(pName, "en"),
+        entityNameHtml: ml(pName),
+        collections: [
+          { labelKey: "detail.chapterIVRequirements", singularKey: "detail.chapterIVRequirements", slug: "chapter-iv", items: chapterParas.map((c: any) => ({
+            type: "chapter_iv",
+            url: entityUrl.chapterIV(c.chapterName, c.paragraphName),
+            name: c.keyString || { en: `§${c.paragraphName}` },
+            subtitle: `§${c.paragraphName}`,
+          })) },
+        ],
+      });
+      writeFileSync(join(pageDir, "index.html"), renderAMPP(ampp, related));
     }
     generated += rows.length;
     process.stdout.write(`  ${generated}/${total} AMPP pages\r`);
@@ -67,43 +83,43 @@ export function generateAMPPPages(dist: string) {
   console.log(`  ${generated} AMPP pages    `);
 }
 
-function renderAMPP(p: any): string {
+function renderAMPP(p: any, related: RelatedResult): string {
   const pName = p.prescription_name || { en: p.pack_display_value || p.cti_extended };
   const name = localized(pName, "en");
 
-  const overviewRows: string[] = [];
-  if (p.pack_display_value) overviewRows.push(infoRow("detail.pack", esc(p.pack_display_value)));
-  if (p.authorisation_nr) overviewRows.push(infoRow("detail.authorisationNr", esc(p.authorisation_nr)));
-  if (p.orphan) overviewRows.push(infoRow("detail.orphanDrug", label("common.yes")));
-  if (p.start_date || p.end_date) overviewRows.push(infoRow("detail.validity", `${formatDate(p.start_date)} — ${p.end_date ? formatDate(p.end_date) : "∞"}`));
-  if (p.status) overviewRows.push(infoRow("detail.status", esc(p.status)));
-  const overview = overviewRows.length ? section("detail.overview", `<dl class="info-list">${overviewRows.join("")}</dl>`) : "";
+  // Breadcrumb: Substance › Generic › Brand › self
+  const crumbs = [];
+  if (p.amp?.vtmName) crumbs.push({ html: ml(p.amp.vtmName), url: entityUrl.vtm(p.amp.vtmName, p.amp.vtmCode) });
+  if (p.amp?.vmpName) crumbs.push({ html: ml(p.amp.vmpName), url: entityUrl.vmp(p.amp.vmpName, p.amp.vmpCode) });
+  if (p.amp) crumbs.push({ html: ml(p.amp.name), url: entityUrl.amp(p.amp.name, p.amp.code) });
+  crumbs.push({ html: ml(pName) });
 
-  // AMP link
-  const ampLink = p.amp ? section("detail.brandInformation",
-    `<a href="${entityUrl.amp(p.amp.name, p.amp.code)}" class="rel-item">${badge("amp")}<div class="rel-item-content"><span class="rel-item-name">${ml(p.amp.name)}</span>${p.amp.companyName ? `<span class="rel-item-subtitle">${esc(p.amp.companyName)}</span>` : ""}</div><span class="rel-item-arrow">›</span></a>`) : "";
+  // Single-valued relationship (body info-row): ATC. (Chapter IV is N-valued → sidebar.)
+  const relationshipRows = [
+    p.atc ? infoRow("detail.atcClassification", `<a href="${entityUrl.atc(p.atc.code)}">${esc(p.atc.code)} — ${esc(p.atc.description)}</a>`) : "",
+  ];
+  const attrRows = [
+    p.pack_display_value ? infoRow("detail.pack", esc(p.pack_display_value)) : "",
+    p.authorisation_nr ? infoRow("detail.authorisationNr", esc(p.authorisation_nr)) : "",
+    p.start_date || p.end_date ? infoRow("detail.validity", `${formatDate(p.start_date)} — ${p.end_date ? formatDate(p.end_date) : "∞"}`) : "",
+    p.status ? infoRow("detail.status", esc(p.status)) : "",
+  ];
 
-  // ATC
-  const atcLink = p.atc ? section("detail.atcClassification",
-    `<a href="${entityUrl.atc(p.atc.code)}" class="rel-item">${badge("atc")}<div class="rel-item-content"><span class="rel-item-name">${esc(p.atc.code)} — ${esc(p.atc.description)}</span></div><span class="rel-item-arrow">›</span></a>`) : "";
+  const keyFigures = infoSection("detail.keyFigures", [
+    p.ex_factory_price != null ? infoRow("detail.exFactoryPrice", formatPrice(p.ex_factory_price)) : "",
+  ]);
 
-  // CNK codes / pricing table
+  // CNK codes / pricing — body table
   const cnkHtml = p.cnk_codes.length > 0 ? section("detail.pricingCnkCodes",
-    `<div class="rel-list">${p.cnk_codes.map((d: any) => {
+    `<table class="data-table"><tbody>${p.cnk_codes.map((d: any) => {
       const envLabel = d.deliveryEnvironment === "H" ? "H" : "P";
-      const badges = [
-        d.cheapest ? '<span class="badge" style="background:#22C55E20;color:#22C55E">Cheapest</span>' : "",
-        d.cheap ? '<span class="badge" style="background:#3B82F620;color:#3B82F6">Cheap</span>' : "",
-        d.reimbursable ? '<span class="badge" style="background:#7C3AED20;color:#7C3AED">Reimbursable</span>' : "",
+      const flags = [
+        d.cheapest ? '<span class="flag flag-green">Cheapest</span>' : "",
+        d.cheap ? '<span class="flag flag-blue">Cheap</span>' : "",
+        d.reimbursable ? '<span class="flag flag-purple">Reimbursable</span>' : "",
       ].filter(Boolean).join(" ");
-      return `<div class="rel-item"><div class="rel-item-content"><span class="rel-item-name">CNK ${esc(d.code)} <span class="badge" style="background:var(--card-bg);color:var(--text-secondary)">${envLabel}</span></span><span class="rel-item-subtitle">${d.price != null ? formatPrice(d.price) : "—"} ${badges}</span></div></div>`;
-    }).join("")}</div>`, { count: p.cnk_codes.length }) : "";
-
-  // Chapter IV
-  const chapterIVHtml = p.chapter_iv.length > 0 ? section("detail.chapterIVRequirements",
-    `<div class="rel-list">${[...new Map(p.chapter_iv.map((c: any) => [`${c.chapterName}-${c.paragraphName}`, c])).values()].map((c: any) =>
-      `<a href="${entityUrl.chapterIV(c.chapterName, c.paragraphName)}" class="rel-item">${badge("chapter_iv")}<div class="rel-item-content"><span class="rel-item-name">§${esc(c.paragraphName)}</span>${c.keyString ? `<span class="rel-item-subtitle">${ml(c.keyString)}</span>` : ""}</div><span class="rel-item-arrow">›</span></a>`
-    ).join("")}</div>`) : "";
+      return `<tr><td><span class="code-label">CNK</span> <code>${esc(d.code)}</code></td><td><span class="env-tag">${envLabel}</span></td><td class="data-price">${d.price != null ? formatPrice(d.price) : "—"}</td><td>${flags}</td></tr>`;
+    }).join("")}</tbody></table>`, { count: p.cnk_codes.length }) : "";
 
   // Documents
   const docs: string[] = [];
@@ -111,24 +127,26 @@ function renderAMPP(p: any): string {
   if (p.spc_url) docs.push(infoRow("detail.smpc", renderDocLinks(p.spc_url)));
   const docsHtml = docs.length ? section("detail.documents", `<dl class="info-list">${docs.join("")}</dl>`) : "";
 
-  const sidebar = summaryCard([
-    p.amp ? { labelKey: "detail.brandInformation", value: `<a href="${entityUrl.amp(p.amp.name, p.amp.code)}">${ml(p.amp.name)}</a>`, isLink: true } : null,
-    p.atc ? { labelKey: "detail.atcClassification", value: esc(p.atc.code) } : null,
-    { labelKey: "detail.pricingCnkCodes", value: p.cnk_codes.length ? String(p.cnk_codes.length) : "" },
-    p.ex_factory_price != null ? { labelKey: "detail.exFactoryPrice", value: formatPrice(p.ex_factory_price) } : null,
-    { labelKey: "detail.validity", value: p.end_date && new Date(p.end_date) < new Date() ? label("sidebar.expired") : label("sidebar.active") },
-  ].filter(Boolean) as any[]);
+  const pills = [
+    p.orphan ? { labelKey: "detail.orphanDrug", kind: "muted" as const } : null,
+    isExpired(p.end_date) ? { labelKey: "sidebar.expired", kind: "expired" as const } : null,
+  ].filter(Boolean) as any[];
+
+  const codesHtml = `<div class="entity-code"><span class="code-label">CTI</span> <code>${esc(p.cti_extended)}</code></div>${p.cnk_codes.length > 0 ? `<div class="entity-code">${p.cnk_codes.map((d: any) => `<span><span class="code-label">CNK</span> <code>${esc(d.code)}</code></span>`).join(" ")}</div>` : ""}`;
+
+  const header = entityHeader({ type: "ampp", nameHtml: ml(pName), codesHtml, pillsHtml: statusPills(pills) });
+
+  const side = sidebar(related.collections);
 
   return layout(name, `
 <div class="container page-content">
-<div class="detail-grid"><div class="main-col">
-<div class="entity-header">${badge("ampp")}
-<h1>${ml(pName)}</h1>
-<div class="entity-code"><span class="code-label">CTI</span> <code>${esc(p.cti_extended)}</code></div>
-${p.cnk_codes.length > 0 ? `<div class="entity-code">${p.cnk_codes.map((d: any) => `<span><span class="code-label">CNK</span> <code>${esc(d.code)}</code></span>`).join(" ")}</div>` : ""}
-</div>
-${overview}${ampLink}${atcLink}${cnkHtml}${chapterIVHtml}${docsHtml}
-</div>${sidebar}</div></div>`, { description: `${name} — Medication package.` });
+${breadcrumb(crumbs)}
+<div class="detail-grid${side ? "" : " detail-grid-single"}"><div class="main-col">
+${header}
+${infoSection("detail.details", [...relationshipRows, ...attrRows])}
+${keyFigures}
+${cnkHtml}${docsHtml}
+</div>${side}</div></div>`, { description: `${name} — Medication package.` });
 }
 
 function renderDocLinks(urls: Record<string, string>): string {

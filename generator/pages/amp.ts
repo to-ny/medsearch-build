@@ -2,9 +2,10 @@ import { mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import { queryAll } from "../db";
 import {
-  layout, esc, ml, label, badge, entitySlug, entityUrl, formatPrice,
-  localized, relationshipList, infoRow, summaryCard, formatDate, section,
+  layout, esc, ml, label, entitySlug, entityUrl, formatPrice, localized,
+  infoRow, infoRowRaw, infoSection, formatDate, isExpired, entityHeader, sidebar, statusPills, breadcrumb,
 } from "../html";
+import { buildRelated, type RelatedResult } from "../related";
 
 export function generateAMPPages(dist: string) {
   console.log("\nGenerating AMP pages...");
@@ -24,10 +25,16 @@ export function generateAMPPages(dist: string) {
       SELECT a.code, a.name, a.abbreviated_name, a.official_name, a.vmp_code,
         a.company_actor_nr, a.black_triangle, a.medicine_type, a.status, a.start_date, a.end_date,
         (SELECT json_object('code', vmp.code, 'name', json(vmp.name), 'vtmCode', vmp.vtm_code,
-          'vtmName', (SELECT name FROM vtm WHERE vmp.code = vmp.vtm_code))
+          'vtmName', (SELECT json(vtm.name) FROM vtm WHERE vtm.code = vmp.vtm_code))
          FROM vmp WHERE vmp.code = a.vmp_code) as vmp,
         (SELECT json_object('actorNr', c.actor_nr, 'denomination', c.denomination, 'city', c.city, 'countryCode', c.country_code)
          FROM company c WHERE c.actor_nr = a.company_actor_nr) as company,
+        (SELECT COALESCE(json_group_array(json_object('code', atc.code, 'description', atc.description)), '[]')
+         FROM (SELECT DISTINCT ampp.atc_code FROM ampp
+               WHERE ampp.amp_code = a.code AND ampp.atc_code IS NOT NULL
+                 AND (ampp.end_date IS NULL OR ampp.end_date > date('now'))) x
+         JOIN atc_classification atc ON atc.code = x.atc_code
+         ORDER BY atc.code) as atc_codes,
         (SELECT COALESCE(json_group_array(json_object(
           'substanceCode', i.substance_code, 'substanceName', json(s.name),
           'strengthValue', i.strength_value, 'strengthUnit', i.strength_unit, 'strengthDescription', i.strength_description
@@ -64,7 +71,21 @@ export function generateAMPPages(dist: string) {
       const slug = entitySlug(amp.name, amp.code);
       const pageDir = join(dir, slug);
       mkdirSync(pageDir, { recursive: true });
-      writeFileSync(join(pageDir, "index.html"), renderAMP(amp));
+      const related = buildRelated({
+        entityDir: pageDir,
+        entityBaseUrl: entityUrl.amp(amp.name, amp.code),
+        entityName: localized(amp.name, "en"),
+        entityNameHtml: ml(amp.name),
+        collections: [
+          { labelKey: "detail.availablePackages", singularKey: "detail.package", slug: "packages", items: amp.packages.map((p: any) => ({
+            type: "ampp",
+            url: entityUrl.ampp(p.prescriptionName || { en: p.packDisplayValue || p.ctiExtended }, p.ctiExtended),
+            name: p.prescriptionName || { en: p.packDisplayValue || p.ctiExtended },
+            subtitle: p.packDisplayValue || undefined,
+          })) },
+        ],
+      });
+      writeFileSync(join(pageDir, "index.html"), renderAMP(amp, related));
     }
     generated += rows.length;
     process.stdout.write(`  ${generated}/${total} AMP pages\r`);
@@ -72,71 +93,78 @@ export function generateAMPPages(dist: string) {
   console.log(`  ${generated} AMP pages    `);
 }
 
-function renderAMP(a: any): string {
+function renderAMP(a: any, related: RelatedResult): string {
   const name = localized(a.name, "en");
-
-  const overviewRows: string[] = [];
-  if (a.official_name) overviewRows.push(infoRow("detail.officialName", esc(a.official_name)));
-  if (a.abbreviated_name) overviewRows.push(infoRow("detail.abbreviatedName", ml(a.abbreviated_name)));
-  if (a.medicine_type) overviewRows.push(infoRow("detail.medicineType", esc(a.medicine_type)));
-  if (a.start_date || a.end_date) overviewRows.push(infoRow("detail.validity", `${formatDate(a.start_date)} — ${a.end_date ? formatDate(a.end_date) : "∞"}`));
-  if (a.status && a.status !== "AUTHORIZED") overviewRows.push(infoRow("detail.status", esc(a.status)));
-  const overview = overviewRows.length ? section("detail.overview", `<dl class="info-list">${overviewRows.join("")}</dl>`) : "";
 
   const blackTriangle = a.black_triangle
     ? `<div class="warning-box"><svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/></svg><span>${label("detail.enhancedMonitoringDescription")}</span></div>`
     : "";
 
-  const vmpLink = a.vmp ? section("detail.genericProduct",
-    `<a href="${entityUrl.vmp(a.vmp.name, a.vmp.code)}" class="rel-item">${badge("vmp")}<div class="rel-item-content"><span class="rel-item-name">${ml(a.vmp.name)}</span></div><span class="rel-item-arrow">›</span></a>`) : "";
-
-  const companyLink = a.company ? section("detail.manufacturer",
-    `<a href="${entityUrl.company(a.company.denomination, a.company.actorNr)}" class="rel-item">${badge("company")}<div class="rel-item-content"><span class="rel-item-name">${esc(a.company.denomination)}</span>${a.company.city ? `<span class="rel-item-subtitle">${esc(a.company.city)}${a.company.countryCode ? `, ${esc(a.company.countryCode)}` : ""}</span>` : ""}</div><span class="rel-item-arrow">›</span></a>`) : "";
-
-  // Components (form + route)
-  const componentsHtml = a.components.length > 0 ? section("detail.pharmaceuticalDetails",
-    `<dl class="info-list">${a.components.map((c: any) => `${c.formName ? infoRow("detail.form", ml(c.formName)) : ""}${c.routeName ? infoRow("detail.route", ml(c.routeName)) : ""}`).join("")}</dl>`) : "";
-
-  // Ingredients
-  const ingredientsHtml = a.ingredients.length > 0 ? section("detail.activeIngredients",
-    `<div class="rel-list">${a.ingredients.map((i: any) => {
-      const strength = i.strengthDescription || (i.strengthValue ? `${i.strengthValue} ${i.strengthUnit || ""}` : "");
-      const substanceName = i.substanceName || { en: "Unknown substance" };
-      const url = i.substanceCode ? entityUrl.substance(substanceName, i.substanceCode) : "";
-      return url
-        ? `<a href="${url}" class="rel-item">${badge("substance")}<div class="rel-item-content"><span class="rel-item-name">${ml(substanceName)}</span>${strength ? `<span class="rel-item-subtitle">${esc(strength)}</span>` : ""}</div><span class="rel-item-arrow">›</span></a>`
-        : `<div class="rel-item">${badge("substance")}<div class="rel-item-content"><span class="rel-item-name">${ml(substanceName)}</span>${strength ? `<span class="rel-item-subtitle">${esc(strength)}</span>` : ""}</div></div>`;
-    }).join("")}</div>`) : "";
-
-  // Packages
-  const packagesHtml = relationshipList("detail.availablePackages", a.packages.map((p: any) => ({
-    type: "ampp",
-    url: entityUrl.ampp(p.prescriptionName || { en: p.packDisplayValue || p.ctiExtended }, p.ctiExtended),
-    name: p.prescriptionName || { en: p.packDisplayValue || p.ctiExtended },
-    subtitle: p.packDisplayValue || undefined,
-  })));
+  // Composition & administration: active ingredients (substance → strength) + form/route
+  const ingredientRows = a.ingredients.map((i: any) => {
+    const strength = i.strengthDescription || (i.strengthValue ? `${i.strengthValue} ${i.strengthUnit || ""}` : "");
+    const substanceName = i.substanceName || { en: "Unknown substance" };
+    const labelHtml = i.substanceCode
+      ? `<a href="${entityUrl.substance(substanceName, i.substanceCode)}">${ml(substanceName)}</a>`
+      : ml(substanceName);
+    return infoRowRaw(labelHtml, esc(strength));
+  });
+  const formRouteRows = a.components.flatMap((c: any) => [
+    c.formName ? infoRow("detail.form", ml(c.formName)) : "",
+    c.routeName ? infoRow("detail.route", ml(c.routeName)) : "",
+  ]);
+  const ingredients = infoSection("detail.activeIngredients", ingredientRows);
+  const administration = infoSection("detail.administration", formRouteRows);
 
   const priceStr = a.min_price != null
     ? `${formatPrice(a.min_price)}${a.max_price != null && a.max_price !== a.min_price ? ` — ${formatPrice(a.max_price)}` : ""}`
     : "";
 
-  const sidebar = summaryCard([
-    a.vmp?.vtmName ? { labelKey: "detail.activeSubstance", value: `<a href="${entityUrl.vtm(a.vmp.vtmName, a.vmp.vtmCode)}">${ml(a.vmp.vtmName)}</a>`, isLink: true } : null,
-    a.vmp ? { labelKey: "detail.genericProduct", value: `<a href="${entityUrl.vmp(a.vmp.name, a.vmp.code)}">${ml(a.vmp.name)}</a>`, isLink: true } : null,
-    a.company ? { labelKey: "detail.manufacturer", value: esc(a.company.denomination) } : null,
-    { labelKey: "sidebar.packageCount", value: String(a.packages.length) },
-    { labelKey: "search.priceRange", value: priceStr },
-    { labelKey: "detail.activeIngredients", value: a.ingredients.length ? String(a.ingredients.length) : "" },
-    { labelKey: "detail.validity", value: a.end_date && new Date(a.end_date) < new Date() ? label("sidebar.expired") : label("sidebar.active") },
-  ].filter(Boolean) as any[]);
+  // Breadcrumb: Substance › Generic › self
+  const crumbs = [];
+  if (a.vmp?.vtmName) crumbs.push({ html: ml(a.vmp.vtmName), url: entityUrl.vtm(a.vmp.vtmName, a.vmp.vtmCode) });
+  if (a.vmp) crumbs.push({ html: ml(a.vmp.name), url: entityUrl.vmp(a.vmp.name, a.vmp.code) });
+  crumbs.push({ html: ml(a.name) });
+
+  // Single-valued relationships (body info-rows): manufacturer, ATC. (Packages are N-valued → sidebar.)
+  const relationshipRows = [
+    a.company ? infoRow("detail.manufacturer", `<a href="${entityUrl.company(a.company.denomination, a.company.actorNr)}">${esc(a.company.denomination)}</a>`) : "",
+    ...a.atc_codes.map((atc: any) => infoRow("detail.atcClassification", `<a href="${entityUrl.atc(atc.code)}">${esc(atc.code)} — ${esc(atc.description)}</a>`)),
+  ];
+
+  const attrRows = [
+    a.official_name ? infoRow("detail.officialName", esc(a.official_name)) : "",
+    a.abbreviated_name ? infoRow("detail.abbreviatedName", ml(a.abbreviated_name)) : "",
+    a.medicine_type ? infoRow("detail.medicineType", esc(a.medicine_type)) : "",
+    a.start_date || a.end_date ? infoRow("detail.validity", `${formatDate(a.start_date)} — ${a.end_date ? formatDate(a.end_date) : "∞"}`) : "",
+    a.status && a.status !== "AUTHORIZED" ? infoRow("detail.status", esc(a.status)) : "",
+  ];
+
+  const keyFigures = infoSection("detail.keyFigures", [priceStr ? infoRow("search.priceRange", priceStr) : ""]);
+
+  const pills = [
+    a.black_triangle ? { labelKey: "detail.enhancedMonitoring", kind: "warn" as const } : null,
+    isExpired(a.end_date) ? { labelKey: "sidebar.expired", kind: "expired" as const } : null,
+  ].filter(Boolean) as any[];
+
+  const header = entityHeader({
+    type: "amp",
+    nameHtml: ml(a.name),
+    codesHtml: `<div class="entity-code"><span class="code-label">${label("detail.code")}</span> <code>${esc(a.code)}</code></div>`,
+    pillsHtml: statusPills(pills),
+  });
+
+  const side = sidebar(related.collections);
 
   return layout(name, `
 <div class="container page-content">
-<div class="detail-grid"><div class="main-col">
-<div class="entity-header">${badge("amp")}${a.black_triangle ? ' <span class="black-triangle" title="Enhanced Monitoring">▲</span>' : ""}
-<h1>${ml(a.name)}</h1>
-<div class="entity-code"><span class="code-label">${label("detail.code")}</span> <code>${esc(a.code)}</code></div>
-</div>
-${blackTriangle}${overview}${vmpLink}${companyLink}${componentsHtml}${ingredientsHtml}${packagesHtml}
-</div>${sidebar}</div></div>`, { description: `${name} — Brand medication${a.company ? ` by ${a.company.denomination}` : ""}.` });
+${breadcrumb(crumbs)}
+<div class="detail-grid${side ? "" : " detail-grid-single"}"><div class="main-col">
+${header}
+${blackTriangle}
+${infoSection("detail.details", [...relationshipRows, ...attrRows])}
+${keyFigures}
+${ingredients}
+${administration}
+</div>${side}</div></div>`, { description: `${name} — Brand medication${a.company ? ` by ${a.company.denomination}` : ""}.` });
 }

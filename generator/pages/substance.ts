@@ -2,9 +2,10 @@ import { mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import { queryAll } from "../db";
 import {
-  layout, esc, ml, label, badge, entitySlug, entityUrl,
-  localized, relationshipList, infoRow, summaryCard, section,
+  layout, esc, ml, label, entitySlug, entityUrl, localized,
+  infoRow, entityHeader, infoSection, sidebar,
 } from "../html";
+import { buildRelated, type RelatedResult } from "../related";
 
 export function generateSubstancePages(dist: string) {
   console.log("\nGenerating Substance pages...");
@@ -27,37 +28,42 @@ export function generateSubstancePages(dist: string) {
     const slug = entitySlug(sub.name, sub.code);
     const pageDir = join(dir, slug);
     mkdirSync(pageDir, { recursive: true });
-    writeFileSync(join(pageDir, "index.html"), renderSubstance(sub));
+    const related = buildRelated({
+      entityDir: pageDir,
+      entityBaseUrl: entityUrl.substance(sub.name, sub.code),
+      entityName: localized(sub.name, "en"),
+      entityNameHtml: ml(sub.name),
+      collections: [
+        { labelKey: "detail.productsContainingIngredient", singularKey: "detail.brandProduct", slug: "products", items: sub.used_in_amps.map((a: any) => ({
+          type: "amp", url: entityUrl.amp(a.name, a.code), name: a.name, subtitle: a.companyName,
+        })) },
+      ],
+    });
+    writeFileSync(join(pageDir, "index.html"), renderSubstance(sub, related));
   }
   console.log(`  ${rows.length} Substance pages`);
 }
 
-function renderSubstance(s: any): string {
+function renderSubstance(s: any, related: RelatedResult): string {
   const name = localized(s.name, "en");
 
   const langVariants = (["nl", "fr", "en", "de"] as const)
     .filter((l) => s.name[l] && s.name[l] !== name)
     .map((l) => infoRow(`languages.${l === "nl" ? "dutch" : l === "fr" ? "french" : l === "en" ? "english" : "german"}`, esc(s.name[l])))
     .join("");
-  const overview = langVariants
-    ? section("detail.overview", `<dl class="info-list">${langVariants}</dl>`)
-    : "";
 
-  const amps = relationshipList("detail.productsContainingIngredient", s.used_in_amps.map((a: any) => ({
-    type: "amp", url: entityUrl.amp(a.name, a.code), name: a.name, subtitle: a.companyName,
-  })));
+  const header = entityHeader({
+    type: "substance",
+    nameHtml: ml(s.name),
+    codesHtml: `<div class="entity-code"><span class="code-label">${label("detail.code")}</span> <code>${esc(s.code)}</code></div>`,
+  });
 
-  const sidebar = summaryCard([
-    { labelKey: "detail.brandProducts", value: String(s.used_in_amps.length) },
-  ]);
+  const side = sidebar(related.collections);
 
   return layout(name, `
 <div class="container page-content">
-<div class="detail-grid"><div class="main-col">
-<div class="entity-header">${badge("substance")}
-<h1>${ml(s.name)}</h1>
-<div class="entity-code"><span class="code-label">${label("detail.code")}</span> <code>${esc(s.code)}</code></div>
-</div>
-${overview}${amps}
-</div>${sidebar}</div></div>`, { description: `${name} — Ingredient used in ${s.used_in_amps.length} products.` });
+<div class="detail-grid${side ? "" : " detail-grid-single"}"><div class="main-col">
+${header}
+${infoSection("detail.details", [langVariants])}
+</div>${side}</div></div>`, { description: `${name} — Ingredient used in ${s.used_in_amps.length} products.` });
 }

@@ -53,6 +53,34 @@
   }
 })();
 
+// Listing-page filter (client-side, over rows already in the DOM)
+(function () {
+  var input = document.getElementById('list-filter');
+  if (!input) return;
+  var PH = { en: 'Filter…', nl: 'Filteren…', fr: 'Filtrer…', de: 'Filtern…' };
+  var RES = { en: 'results', nl: 'resultaten', fr: 'résultats', de: 'Ergebnisse' };
+  var items = Array.prototype.slice.call(document.querySelectorAll('.listing-list .rel-item'));
+  var countEl = document.getElementById('list-filter-count');
+  function lang() { return document.documentElement.lang || 'en'; }
+  function render() {
+    var q = input.value.trim().toLowerCase();
+    var shown = 0;
+    for (var i = 0; i < items.length; i++) {
+      var t = items[i].getAttribute('data-f') || '';
+      var match = !q || t.indexOf(q) !== -1;
+      items[i].style.display = match ? 'flex' : 'none';
+      if (match) shown++;
+    }
+    if (countEl) countEl.textContent = shown + ' ' + (RES[lang()] || RES.en);
+  }
+  input.addEventListener('input', render);
+  input.placeholder = PH[lang()] || PH.en;
+  render();
+  if (window.onLangChange) {
+    window.onLangChange(function () { input.placeholder = PH[lang()] || PH.en; render(); });
+  }
+})();
+
 // Show more / show less toggle
 function toggleList(btn) {
   var section = btn.closest('.section');

@@ -2,9 +2,10 @@ import { mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import { queryAll } from "../db";
 import {
-  layout, esc, label, badge, entityUrl,
-  relationshipList, infoRow, summaryCard, section,
+  layout, esc, label, entityUrl,
+  infoRow, entityHeader, infoSection, sidebar, breadcrumb,
 } from "../html";
+import { buildRelated, type RelatedResult } from "../related";
 
 export function generateATCPages(dist: string) {
   console.log("\nGenerating ATC pages...");
@@ -40,7 +41,19 @@ export function generateATCPages(dist: string) {
     const slug = `${atc.code.toLowerCase()}_${atc.code}`;
     const pageDir = join(dir, slug);
     mkdirSync(pageDir, { recursive: true });
-    writeFileSync(join(pageDir, "index.html"), renderATC(atc, atcMap));
+    const entityName = `${atc.code} — ${atc.description}`;
+    const related = buildRelated({
+      entityDir: pageDir,
+      entityBaseUrl: entityUrl.atc(atc.code),
+      entityName,
+      entityNameHtml: esc(entityName),
+      collections: [
+        { labelKey: "detail.childClassifications", singularKey: "detail.childClassification", slug: "children", items: atc.children.map((c: any) => ({
+          type: "atc", url: entityUrl.atc(c.code), name: { en: `${c.code} — ${c.description}` },
+        })) },
+      ],
+    });
+    writeFileSync(join(pageDir, "index.html"), renderATC(atc, atcMap, related));
   }
   console.log(`  ${rows.length} ATC pages`);
 }
@@ -79,34 +92,28 @@ function buildHierarchy(code: string, atcMap: Map<string, any>): { code: string;
   return chain;
 }
 
-function renderATC(atc: any, atcMap: Map<string, any>): string {
+function renderATC(atc: any, atcMap: Map<string, any>, related: RelatedResult): string {
   const level = getATCLevel(atc.code);
   const hierarchy = buildHierarchy(atc.code, atcMap);
 
-  const hierarchyHtml = hierarchy.length > 0
-    ? section("detail.classificationHierarchy", `<div class="atc-hierarchy">${hierarchy.map((h, i) =>
-        `<div class="atc-level"><span class="atc-indent">${"—".repeat(i + 1)}</span><a href="${entityUrl.atc(h.code)}">${esc(h.code)} — ${esc(h.description)}</a></div>`
-      ).join("")}<div class="atc-level atc-level-current"><span class="atc-indent">${"—".repeat(hierarchy.length + 1)}</span>${esc(atc.code)} — ${esc(atc.description)}</div></div>`)
-    : "";
+  const crumbs: { html: string; url?: string }[] = hierarchy.map((h) => ({ html: esc(h.code), url: entityUrl.atc(h.code) }));
+  crumbs.push({ html: esc(atc.code) });
 
-  const children = relationshipList("detail.childClassifications", atc.children.map((c: any) => ({
-    type: "atc", url: entityUrl.atc(c.code), name: { en: `${c.code} — ${c.description}` },
-  })));
+  const detailRows = [infoRow("sidebar.level", label(`atcLevels.level${level}`))];
 
-  const sidebar = summaryCard([
-    { labelKey: "sidebar.level", value: `${label(`atcLevels.level${level}`)}` },
-    hierarchy.length > 0 ? { labelKey: "detail.parent", value: `<a href="${entityUrl.atc(hierarchy[hierarchy.length - 1].code)}">${esc(hierarchy[hierarchy.length - 1].code)}</a>`, isLink: true } : null,
-    { labelKey: "detail.children", value: String(atc.children.length) },
-    { labelKey: "sidebar.packageCount", value: String(atc.package_count) },
-  ].filter(Boolean) as any[]);
+  const header = entityHeader({
+    type: "atc",
+    nameHtml: esc(atc.description),
+    codesHtml: `<div class="entity-code"><span class="code-label">${label("codes.atcFull")}</span> <code>${esc(atc.code)}</code></div>`,
+  });
+
+  const side = sidebar(related.collections);
 
   return layout(`${atc.code} — ${atc.description}`, `
 <div class="container page-content">
-<div class="detail-grid"><div class="main-col">
-<div class="entity-header">${badge("atc")}
-<h1>${esc(atc.description)}</h1>
-<div class="entity-code"><span class="code-label">${label("codes.atcFull")}</span> <code>${esc(atc.code)}</code></div>
-</div>
-${hierarchyHtml}${children}
-</div>${sidebar}</div></div>`, { description: `${atc.code} — ${atc.description}. ATC Classification.` });
+${hierarchy.length > 0 ? breadcrumb(crumbs) : ""}
+<div class="detail-grid${side ? "" : " detail-grid-single"}"><div class="main-col">
+${header}
+${infoSection("detail.details", detailRows)}
+</div>${side}</div></div>`, { description: `${atc.code} — ${atc.description}. ATC Classification.` });
 }

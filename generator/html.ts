@@ -139,30 +139,48 @@ export function badge(type: string): string {
 export function section(
   titleKey: string,
   content: string,
-  opts?: { count?: number }
+  opts?: { count?: number; id?: string }
 ): string {
   const countHtml =
     opts?.count != null ? ` <span class="count">(${opts.count})</span>` : "";
-  return `<section class="section"><h2 class="section-title">${label(titleKey)}${countHtml}</h2>${content}</section>`;
+  const idAttr = opts?.id ? ` id="${opts.id}"` : "";
+  return `<section class="section"${idAttr}><h2 class="section-title">${label(titleKey)}${countHtml}</h2>${content}</section>`;
+}
+
+/** A related-entity list item */
+export interface RelItem {
+  type: string;
+  url: string;
+  name: Record<string, string>;
+  subtitle?: string;
+}
+
+/** Lowercased searchable text for a rel item (all langs + subtitle) */
+function relSearchText(item: RelItem): string {
+  const names = Object.values(item.name || {}).join(" ");
+  return `${names} ${item.subtitle || ""}`.trim().toLowerCase();
+}
+
+/** Render a single relationship list item (anchor row) */
+export function relItem(
+  item: RelItem,
+  opts?: { hidden?: boolean; search?: boolean }
+): string {
+  const cls = `rel-item${opts?.hidden ? " hidden-item" : ""}`;
+  const dataF = opts?.search ? ` data-f="${esc(relSearchText(item))}"` : "";
+  return `<a href="${item.url}" class="${cls}"${dataF}>${badge(item.type)}<div class="rel-item-content"><span class="rel-item-name">${ml(item.name)}</span>${item.subtitle ? `<span class="rel-item-subtitle">${esc(item.subtitle)}</span>` : ""}</div><span class="rel-item-arrow" aria-hidden="true">›</span></a>`;
 }
 
 /** Render a relationship list (VMPs, AMPs, etc.) */
 export function relationshipList(
   titleKey: string,
-  items: {
-    type: string;
-    url: string;
-    name: Record<string, string>;
-    subtitle?: string;
-  }[]
+  items: RelItem[],
+  opts?: { id?: string }
 ): string {
   if (items.length === 0) return "";
   const INITIAL = 10;
   const listItems = items
-    .map(
-      (item, i) =>
-        `<a href="${item.url}" class="rel-item${i >= INITIAL ? " hidden-item" : ""}">${badge(item.type)}<div class="rel-item-content"><span class="rel-item-name">${ml(item.name)}</span>${item.subtitle ? `<span class="rel-item-subtitle">${esc(item.subtitle)}</span>` : ""}</div><span class="rel-item-arrow" aria-hidden="true">›</span></a>`
-    )
+    .map((item, i) => relItem(item, { hidden: i >= INITIAL }))
     .join("");
 
   const showMore =
@@ -172,6 +190,7 @@ export function relationshipList(
 
   return section(titleKey, `<div class="rel-list">${listItems}</div>${showMore}`, {
     count: items.length,
+    id: opts?.id,
   });
 }
 
@@ -180,28 +199,88 @@ export function infoRow(labelKey: string, value: string): string {
   return `<div class="info-row"><dt>${label(labelKey)}</dt><dd>${value}</dd></div>`;
 }
 
-/** Format a date */
+/** Parse a date value tolerant of JSON-quoted strings (some tables store `"2016-…Z"`). */
+function parseDate(d: string | null | undefined): Date | null {
+  if (!d) return null;
+  const s = typeof d === "string" ? d.replace(/^"+|"+$/g, "").trim() : String(d);
+  if (!s) return null;
+  const dt = new Date(s);
+  return isNaN(dt.getTime()) ? null : dt;
+}
+
+/** Format a date (returns "" if unparseable) */
 export function formatDate(d: string | null): string {
-  if (!d) return "";
-  return new Date(d).toLocaleDateString("en-GB", {
+  const dt = parseDate(d);
+  if (!dt) return "";
+  return dt.toLocaleDateString("en-GB", {
     day: "numeric",
     month: "short",
     year: "numeric",
   });
 }
 
-/** Render the sidebar summary card */
-export function summaryCard(
-  rows: { labelKey: string; value: string; isLink?: boolean }[]
+/** True if the end-date is in the past. */
+export function isExpired(endDate: string | null | undefined): boolean {
+  const dt = parseDate(endDate);
+  return dt ? dt < new Date() : false;
+}
+
+/** Breadcrumb trail (hierarchical parents; last item = current page, unlinked) */
+export function breadcrumb(items: { html: string; url?: string }[]): string {
+  if (items.length === 0) return "";
+  const parts = items.map((it, i) => {
+    const last = i === items.length - 1;
+    return it.url && !last
+      ? `<a href="${it.url}">${it.html}</a>`
+      : `<span class="breadcrumb-current"${last ? ' aria-current="page"' : ""}>${it.html}</span>`;
+  });
+  return `<nav class="breadcrumb">${parts.join('<span class="breadcrumb-sep" aria-hidden="true">›</span>')}</nav>`;
+}
+
+/** Quick-glance status pills (expired, orphan, enhanced monitoring, …) */
+export function statusPills(
+  pills: { labelKey: string; kind?: "warn" | "muted" | "expired" }[]
 ): string {
-  const rowsHtml = rows
-    .filter((r) => r.value)
-    .map(
-      (r) =>
-        `<div class="summary-row"><span class="summary-label">${label(r.labelKey)}</span><span class="summary-value${r.isLink ? " link-text" : ""}">${r.value}</span></div>`
-    )
+  if (!pills.length) return "";
+  return `<div class="status-pills">${pills
+    .map((p) => `<span class="status-pill status-${p.kind || "muted"}">${label(p.labelKey)}</span>`)
+    .join("")}</div>`;
+}
+
+/** Consistent entity identity header */
+export function entityHeader(opts: {
+  type: string;
+  nameHtml: string;
+  codesHtml: string;
+  pillsHtml?: string;
+}): string {
+  return `<div class="entity-header"><div class="entity-header-top">${badge(opts.type)}${opts.pillsHtml || ""}</div>
+<h1>${opts.nameHtml}</h1>
+${opts.codesHtml}</div>`;
+}
+
+/** A body section of label/value info-rows (Details, Key figures, …) */
+export function infoSection(titleKey: string, rows: string[]): string {
+  const filtered = rows.filter(Boolean);
+  if (!filtered.length) return "";
+  return section(titleKey, `<dl class="info-list">${filtered.join("")}</dl>`);
+}
+
+/** Body info-row whose label is arbitrary HTML (e.g. a linked ingredient name) */
+export function infoRowRaw(labelHtml: string, value: string): string {
+  return `<div class="info-row"><dt>${labelHtml}</dt><dd>${value}</dd></div>`;
+}
+
+/** Sidebar link to a multi-item collection (e.g. Packages → 12). The ONLY sidebar element. */
+export interface RelatedColl { labelKey: string; count: number; url: string; }
+
+/** Sidebar: only multi-item relationship collections, one uniform link shape. */
+export function sidebar(collections: RelatedColl[]): string {
+  if (!collections.length) return "";
+  const rows = collections
+    .map((c) => `<a class="related-link" href="${c.url}"><span class="related-count">${c.count}</span><span class="related-type">${label(c.labelKey)}</span><span class="rel-item-arrow" aria-hidden="true">›</span></a>`)
     .join("");
-  return `<aside class="sidebar"><div class="summary-card"><h3>${label("detail.summary")}</h3><div class="summary-rows">${rowsHtml}</div></div></aside>`;
+  return `<aside class="sidebar"><div class="summary-card related-card"><h3>${label("related.title")}</h3><div class="related-group">${rows}</div></div></aside>`;
 }
 
 /** Minify HTML — collapse whitespace between tags */

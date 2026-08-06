@@ -2,9 +2,10 @@ import { mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import { queryAll } from "../db";
 import {
-  layout, esc, ml, label, badge, slugify, entityUrl, localized,
-  relationshipList, infoRow, summaryCard, formatDate, section,
+  layout, esc, label, slugify, entityUrl,
+  infoRow, formatDate, isExpired, section, entityHeader, infoSection, sidebar, statusPills,
 } from "../html";
+import { buildRelated, type RelatedResult } from "../related";
 
 export function generateCompanyPages(dist: string) {
   console.log("\nGenerating Company pages...");
@@ -30,15 +31,33 @@ export function generateCompanyPages(dist: string) {
     const slug = `${slugify(co.denomination)}_${co.actor_nr}`;
     const pageDir = join(dir, slug);
     mkdirSync(pageDir, { recursive: true });
-    writeFileSync(join(pageDir, "index.html"), renderCompany(co));
+    const related = buildRelated({
+      entityDir: pageDir,
+      entityBaseUrl: entityUrl.company(co.denomination, co.actor_nr),
+      entityName: co.denomination || "",
+      entityNameHtml: esc(co.denomination || ""),
+      collections: [
+        { labelKey: "detail.products", singularKey: "detail.product", slug: "products", items: co.products.map((p: any) => ({
+          type: "amp", url: entityUrl.amp(p.name, p.code), name: p.name,
+        })) },
+      ],
+    });
+    writeFileSync(join(pageDir, "index.html"), renderCompany(co, related));
   }
   console.log(`  ${rows.length} Company pages`);
 }
 
-function renderCompany(c: any): string {
+function renderCompany(c: any, related: RelatedResult): string {
   const name = c.denomination;
   const address = [c.street_name, c.street_num, c.postbox].filter(Boolean).join(" ");
   const cityLine = [c.postcode, c.city].filter(Boolean).join(" ");
+
+  const detailRows = [
+    c.legal_form ? infoRow("company.legalForm", esc(c.legal_form)) : "",
+    c.vat_number ? infoRow("company.vat", `${c.vat_country_code || ""}${esc(c.vat_number)}`) : "",
+    c.country_code ? infoRow("company.country", esc(c.country_code)) : "",
+    c.start_date || c.end_date ? infoRow("detail.validity", `${formatDate(c.start_date)} — ${c.end_date ? formatDate(c.end_date) : "∞"}`) : "",
+  ];
 
   const contactRows: string[] = [];
   if (address) contactRows.push(infoRow("company.address", `${esc(address)}${cityLine ? `<br>${esc(cityLine)}` : ""}${c.country_code ? `<br>${esc(c.country_code)}` : ""}`));
@@ -46,29 +65,20 @@ function renderCompany(c: any): string {
   if (c.language) contactRows.push(infoRow("company.preferredLanguage", esc(c.language)));
   const contact = contactRows.length ? section("detail.contactInformation", `<dl class="info-list">${contactRows.join("")}</dl>`) : "";
 
-  const legalRows: string[] = [];
-  if (c.legal_form) legalRows.push(infoRow("company.legalForm", esc(c.legal_form)));
-  if (c.vat_number) legalRows.push(infoRow("company.vat", `${c.vat_country_code || ""}${esc(c.vat_number)}`));
-  if (c.start_date || c.end_date) legalRows.push(infoRow("detail.validity", `${formatDate(c.start_date)} — ${c.end_date ? formatDate(c.end_date) : "∞"}`));
-  const legal = legalRows.length ? section("detail.legalInformation", `<dl class="info-list">${legalRows.join("")}</dl>`) : "";
+  const header = entityHeader({
+    type: "company",
+    nameHtml: esc(name),
+    codesHtml: `<div class="entity-code"><span class="code-label">${label("codes.actorNr")}</span> <code>${esc(c.actor_nr)}</code></div>`,
+    pillsHtml: isExpired(c.end_date) ? statusPills([{ labelKey: "sidebar.expired", kind: "expired" }]) : "",
+  });
 
-  const products = relationshipList("detail.products", c.products.map((p: any) => ({
-    type: "amp", url: entityUrl.amp(p.name, p.code), name: p.name,
-  })));
-
-  const sidebar = summaryCard([
-    { labelKey: "detail.products", value: String(c.product_count) },
-    c.country_code ? { labelKey: "company.country", value: esc(c.country_code) } : null,
-    { labelKey: "detail.validity", value: c.end_date && new Date(c.end_date) < new Date() ? label("sidebar.expired") : label("sidebar.active") },
-  ].filter(Boolean) as any[]);
+  const side = sidebar(related.collections);
 
   return layout(name, `
 <div class="container page-content">
-<div class="detail-grid"><div class="main-col">
-<div class="entity-header">${badge("company")}
-<h1>${esc(name)}</h1>
-<div class="entity-code"><span class="code-label">${label("codes.actorNr")}</span> <code>${esc(c.actor_nr)}</code></div>
-</div>
-${contact}${legal}${products}
-</div>${sidebar}</div></div>`, { description: `${name} — Pharmaceutical company with ${c.product_count} products.` });
+<div class="detail-grid${side ? "" : " detail-grid-single"}"><div class="main-col">
+${header}
+${infoSection("detail.details", detailRows)}
+${contact}
+</div>${side}</div></div>`, { description: `${name} — Pharmaceutical company with ${c.product_count} products.` });
 }

@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import { queryAll } from "./db";
-import { localized, entitySlug, entityUrl } from "./html";
+import { localized } from "./html";
 
 export function generateSearchIndexes(dist: string) {
   const dir = join(dist, "_indexes");
@@ -35,8 +35,7 @@ function indexVTM() {
     ORDER BY json_extract(v.name, '$.en'), v.code
   `).map(r => {
     const entry: Record<string, unknown> = {
-      id: r.code, n: localized(r.name, "en"), code: r.code,
-      url: `/substances/${entitySlug(r.name, r.code)}/`,
+      n: localized(r.name, "en"), code: r.code,
     };
     if (r.vmp_count) entry.sub = `${r.vmp_count} generic products`;
     return entry;
@@ -52,8 +51,7 @@ function indexVMP() {
     ORDER BY json_extract(v.name, '$.en'), v.code
   `).map(r => {
     const entry: Record<string, unknown> = {
-      id: r.code, n: localized(r.name, "en"), code: r.code,
-      url: `/generics/${entitySlug(r.name, r.code)}/`,
+      n: localized(r.name, "en"), code: r.code,
     };
     if (r.vtm_name) entry.sub = localized(r.vtm_name, "en");
     if (r.group_name) entry.group = localized(r.group_name, "en");
@@ -71,8 +69,7 @@ function indexAMP() {
     ORDER BY json_extract(a.name, '$.en'), a.code
   `).map(r => {
     const entry: Record<string, unknown> = {
-      id: r.code, n: localized(r.name, "en"), code: r.code,
-      url: `/medications/${entitySlug(r.name, r.code)}/`,
+      n: localized(r.name, "en"), code: r.code,
     };
     if (r.company_name) entry.company = r.company_name;
     if (r.vmp_name) entry.sub = localized(r.vmp_name, "en");
@@ -95,10 +92,8 @@ function indexAMPP() {
     const name = r.prescription_name || { en: r.pack_display_value || r.cti_extended };
     const n = localized(name, "en") || r.pack_display_value || r.cti_extended;
     const entry: Record<string, unknown> = {
-      id: r.cti_extended,
       n,
       code: r.cti_extended,
-      url: `/packages/${entitySlug(name, r.cti_extended)}/`,
     };
     if (r.cnk_codes) entry.cnk = r.cnk_codes;
     if (r.amp_name) entry.sub = localized(r.amp_name, "en");
@@ -118,8 +113,7 @@ function indexCompany() {
     ORDER BY c.denomination, c.actor_nr
   `).map(r => {
     const entry: Record<string, unknown> = {
-      id: r.actor_nr, n: r.denomination || '', code: r.actor_nr,
-      url: entityUrl.company(r.denomination || "", r.actor_nr),
+      n: r.denomination || '', code: r.actor_nr,
     };
     if (r.country_code) entry.sub = r.country_code;
     if (r.product_count) entry.count = r.product_count;
@@ -135,8 +129,7 @@ function indexSubstance() {
     ORDER BY json_extract(s.name, '$.en'), s.code
   `).map(r => {
     const entry: Record<string, unknown> = {
-      id: r.code, n: localized(r.name, "en"), code: r.code,
-      url: `/ingredients/${entitySlug(r.name, r.code)}/`,
+      n: localized(r.name, "en"), code: r.code,
     };
     if (r.usage_count) entry.sub = `Used in ${r.usage_count} products`;
     return entry;
@@ -151,8 +144,7 @@ function indexVMPGroup() {
     ORDER BY json_extract(g.name, '$.en'), g.code
   `).map(r => {
     const entry: Record<string, unknown> = {
-      id: r.code, n: localized(r.name, "en"), code: r.code,
-      url: `/therapeutic-groups/${entitySlug(r.name, r.code)}/`,
+      n: localized(r.name, "en"), code: r.code,
     };
     if (r.member_count) entry.sub = `${r.member_count} members`;
     return entry;
@@ -163,8 +155,7 @@ function indexATC() {
   return queryAll(`
     SELECT code, description FROM atc_classification ORDER BY code
   `).map(r => ({
-    id: r.code, n: r.description, code: r.code,
-    url: `/classifications/${r.code.toLowerCase()}_${r.code}/`,
+    n: r.description, code: r.code,
   }));
 }
 

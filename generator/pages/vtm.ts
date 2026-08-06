@@ -2,9 +2,10 @@ import { mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import { queryAll } from "../db";
 import {
-  layout, esc, ml, label, badge, entitySlug, entityUrl, formatPrice,
-  localized, relationshipList, infoRow, summaryCard, formatDate, section,
+  layout, esc, ml, label, entitySlug, entityUrl, formatPrice, localized,
+  infoRow, formatDate, isExpired, entityHeader, infoSection, sidebar, statusPills,
 } from "../html";
+import { buildRelated, type RelatedResult } from "../related";
 
 export function generateVTMPages(dist: string) {
   console.log("\nGenerating VTM pages...");
@@ -50,59 +51,66 @@ export function generateVTMPages(dist: string) {
     const slug = entitySlug(vtm.name, vtm.code);
     const pageDir = join(dir, slug);
     mkdirSync(pageDir, { recursive: true });
-    writeFileSync(join(pageDir, "index.html"), renderVTM(vtm));
+    const related = buildRelated({
+      entityDir: pageDir,
+      entityBaseUrl: entityUrl.vtm(vtm.name, vtm.code),
+      entityName: localized(vtm.name, "en"),
+      entityNameHtml: ml(vtm.name),
+      collections: [
+        { labelKey: "detail.genericProducts", singularKey: "detail.genericProduct", slug: "generics", items: vtm.vmps.map((x: any) => ({
+          type: "vmp", url: entityUrl.vmp(x.name, x.code), name: x.name,
+          subtitle: x.status !== "AUTHORIZED" ? x.status : undefined,
+        })) },
+        { labelKey: "detail.brandProducts", singularKey: "detail.brandProduct", slug: "brands", items: vtm.amps.map((x: any) => ({
+          type: "amp", url: entityUrl.amp(x.name, x.code), name: x.name, subtitle: x.companyName,
+        })) },
+        { labelKey: "detail.therapeuticGroups", singularKey: "detail.therapeuticGroup", slug: "therapeutic-groups", items: vtm.vmp_groups.map((g: any) => ({
+          type: "vmp_group", url: entityUrl.vmpGroup(g.name, g.code), name: g.name,
+        })) },
+      ],
+    });
+    writeFileSync(join(pageDir, "index.html"), renderVTM(vtm, related));
   }
   console.log(`  ${rows.length} VTM pages`);
 }
 
-function renderVTM(v: any): string {
+function renderVTM(v: any, related: RelatedResult): string {
   const name = localized(v.name, "en");
-  const isExpired = v.end_date && new Date(v.end_date) < new Date();
 
   const langVariants = (["nl", "fr", "en", "de"] as const)
     .filter((l) => v.name[l] && v.name[l] !== name)
     .map((l) => infoRow(`languages.${l === "nl" ? "dutch" : l === "fr" ? "french" : l === "en" ? "english" : "german"}`, esc(v.name[l])))
     .join("");
 
-  const hasOverview = v.start_date || v.end_date || langVariants;
-  const overview = hasOverview
-    ? section("detail.overview", `<dl class="info-list">${v.start_date || v.end_date ? infoRow("detail.validity", `${formatDate(v.start_date)} — ${v.end_date ? formatDate(v.end_date) : "∞"}`) : ""}${langVariants}</dl>`)
+  const validityRow = v.start_date || v.end_date
+    ? infoRow("detail.validity", `${formatDate(v.start_date)} — ${v.end_date ? formatDate(v.end_date) : "∞"}`)
     : "";
-
-  const vmps = relationshipList("detail.genericProducts", v.vmps.map((x: any) => ({
-    type: "vmp", url: entityUrl.vmp(x.name, x.code), name: x.name,
-    subtitle: x.status !== "AUTHORIZED" ? x.status : undefined,
-  })));
-
-  const amps = relationshipList("detail.brandProducts", v.amps.map((x: any) => ({
-    type: "amp", url: entityUrl.amp(x.name, x.code), name: x.name, subtitle: x.companyName,
-  })));
 
   const priceStr = v.min_price != null
     ? `${formatPrice(v.min_price)}${v.max_price != null && v.max_price !== v.min_price ? ` — ${formatPrice(v.max_price)}` : ""}`
     : "";
 
-  const sidebar = summaryCard([
-    ...v.vmp_groups.slice(0, 2).map((g: any) => ({
-      labelKey: "detail.therapeuticGroup",
-      value: `<a href="${entityUrl.vmpGroup(g.name, g.code)}">${ml(g.name)}</a>`,
-      isLink: true,
-    })),
-    { labelKey: "detail.genericProducts", value: String(v.vmps.length) },
-    { labelKey: "detail.brandProducts", value: String(v.amps.length) },
-    { labelKey: "sidebar.packageCount", value: String(v.package_count) },
-    { labelKey: "search.priceRange", value: priceStr },
-    { labelKey: "sidebar.reimbursablePercent", value: v.reimbursable_percentage != null ? `${v.reimbursable_percentage}%` : "" },
-    { labelKey: "detail.validity", value: isExpired ? label("sidebar.expired") : label("sidebar.active") },
+  const detailRows = [validityRow, langVariants];
+
+  const keyFigures = infoSection("detail.keyFigures", [
+    priceStr ? infoRow("search.priceRange", priceStr) : "",
+    v.reimbursable_percentage != null ? infoRow("sidebar.reimbursablePercent", `${v.reimbursable_percentage}%`) : "",
   ]);
+
+  const header = entityHeader({
+    type: "vtm",
+    nameHtml: ml(v.name),
+    codesHtml: `<div class="entity-code"><span class="code-label">${label("detail.code")}</span> <code>${esc(v.code)}</code></div>`,
+    pillsHtml: isExpired(v.end_date) ? statusPills([{ labelKey: "sidebar.expired", kind: "expired" }]) : "",
+  });
+
+  const side = sidebar(related.collections);
 
   return layout(name, `
 <div class="container page-content">
-<div class="detail-grid"><div class="main-col">
-<div class="entity-header">${badge("vtm")}
-<h1>${ml(v.name)}</h1>
-<div class="entity-code"><span class="code-label">${label("detail.code")}</span> <code>${esc(v.code)}</code></div>
-</div>
-${overview}${vmps}${amps}
-</div>${sidebar}</div></div>`, { description: `${name} — Active substance with ${v.vmps.length} generic products and ${v.amps.length} brand products.` });
+<div class="detail-grid${side ? "" : " detail-grid-single"}"><div class="main-col">
+${header}
+${infoSection("detail.details", detailRows)}
+${keyFigures}
+</div>${side}</div></div>`, { description: `${name} — Active substance with ${v.vmps.length} generic products and ${v.amps.length} brand products.` });
 }

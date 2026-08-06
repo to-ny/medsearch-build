@@ -50,6 +50,27 @@
     return new Intl.NumberFormat('de-BE', { style: 'currency', currency: 'EUR' }).format(n);
   }
 
+  // Slug + URL reconstruction (mirrors generator/html.ts slugify/entitySlug/entityUrl)
+  function slugify(text) {
+    return (text || '')
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .replace(/-{2,}/g, '-');
+  }
+  var URL_BASE = {
+    vtm: '/substances/', vmp: '/generics/', amp: '/medications/', ampp: '/packages/',
+    substance: '/ingredients/', 'vmp-group': '/therapeutic-groups/'
+  };
+  function urlFor(type, r) {
+    if (r.url) return r.url; // chapter-iv keeps a stored url
+    if (type === 'atc') return '/classifications/' + r.code.toLowerCase() + '_' + r.code + '/';
+    if (type === 'company') return '/companies/' + slugify(r.n) + '_' + r.code + '/';
+    var base = URL_BASE[type] || '/';
+    return base + (r.n ? slugify(r.n) + '_' + r.code : r.code) + '/';
+  }
+
   function typeConfig(key) {
     return TYPES.find(function (t) { return t.key === key; }) || TYPES[0];
   }
@@ -61,8 +82,9 @@
     if (type === 'company') fields = ['n', 'code'];
 
     var ms = new MiniSearch({
+      idField: type === 'chapter-iv' ? 'id' : 'code',
       fields: fields,
-      storeFields: ['id', 'n', 'code', 'sub', 'company', 'cnk', 'pack', 'price', 'reimb', 'bt', 'count', 'group', 'url'],
+      storeFields: ['n', 'code', 'sub', 'company', 'cnk', 'pack', 'price', 'reimb', 'bt', 'count', 'group', 'url'],
       searchOptions: {
         prefix: true,
         fuzzy: 0.2,
@@ -161,7 +183,7 @@
     if (r.bt) right.push('<span class="result-bt" title="' + esc(ml({ en: 'Enhanced monitoring', nl: 'Aanvullende monitoring', fr: 'Surveillance renforcée', de: 'Zusätzliche Überwachung' })) + '">▲</span>');
     if (r.count) right.push('<span class="result-count">' + r.count + ' ' + esc(ml({ en: 'products', nl: 'producten', fr: 'produits', de: 'Produkte' })) + '</span>');
 
-    return '<a href="' + esc(r.url) + '" class="result-card">'
+    return '<a href="' + esc(urlFor(type, r)) + '" class="result-card">'
       + '<div class="result-left">'
       + '<div class="result-info">'
       + '<span class="result-name">' + highlight(name, query) + '</span>'
