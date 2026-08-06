@@ -37,7 +37,24 @@ jobs:
 
       - uses: DeterminateSystems/nix-installer-action@v22
 
-      - uses: DeterminateSystems/magic-nix-cache-action@v14
+      - name: Cache Nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          # Key on the Nix inputs. flake.nix carries samVersion, so a SAM bump
+          # changes the key; restore-prefixes-first-match still restores the
+          # most recent store so the toolchain + unchanged derivations are
+          # reused and only changed paths rebuild.
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          # Trim the store before the post-job save so a cache entry stays well
+          # under GitHub's 10 GB/repo budget (the 2.6 GB site is rebuilt on each
+          # SAM bump anyway, so it isn't worth caching).
+          gc-max-store-size-linux: 5G
+          # Evict stale caches so twice-weekly runs don't accumulate entries.
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-created: 604800 # older than 7 days
+          purge-primary-key: never
 
       - name: Resolve latest SAM version
         id: sam
@@ -84,7 +101,7 @@ jobs:
           df -h .
           # New site content straight from the Nix store into docs/ — a single
           # copy (no /tmp intermediate). The store paths stay intact so
-          # magic-nix-cache can upload them in its post-job step.
+          # cache-nix-action can save them in its post-job step.
           mkdir -p docs
           cp -rL "$GITHUB_WORKSPACE/result/." docs
           chmod -R u+w docs
