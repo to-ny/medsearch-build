@@ -1,4 +1,4 @@
-import { mkdirSync, cpSync, rmSync } from "fs";
+import { mkdirSync, cpSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { getDb, closeDb, queryOne } from "./db";
 import { generateVTMPages } from "./pages/vtm";
@@ -10,7 +10,7 @@ import { generateSubstancePages } from "./pages/substance";
 import { generateVMPGroupPages } from "./pages/vmp-group";
 import { generateATCPages } from "./pages/atc";
 import { generateChapterIVPages } from "./pages/chapter-iv";
-import { generateHomePage } from "./pages/home";
+import { generateHomePage, generate404Page } from "./pages/home";
 import { generateHelpPage } from "./pages/help";
 import { generateSearchIndexes } from "./indexes";
 
@@ -28,6 +28,13 @@ async function main() {
     cpSync(STATIC, DIST, { recursive: true });
     console.log("Copied static assets");
   }
+
+  // SAM version lives in this single file (not stamped into every page's
+  // footer), so a SAM bump changes one file and incremental deploys stay small.
+  writeFileSync(
+    join(DIST, "version.json"),
+    JSON.stringify({ sam: process.env.SAM_VERSION || null })
+  );
 
   const db = getDb();
   console.log(`Opened database: ${process.env.DB_PATH || "data/medsearch.sqlite"}`);
@@ -56,6 +63,7 @@ async function main() {
   generateATCPages(DIST);
   generateChapterIVPages(DIST);
   generateHomePage(DIST, stats);
+  generate404Page(DIST);
   generateHelpPage(DIST);
 
   console.log("\nGenerating search indexes...");

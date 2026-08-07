@@ -2,6 +2,17 @@ import { writeFileSync } from "fs";
 import { join } from "path";
 import { layout, label } from "../html";
 
+export function generate404Page(dist: string) {
+  const content = `
+<div class="container page-content" style="text-align:center;padding:4rem 1rem;">
+<h1 style="font-size:2.5rem;font-weight:700;margin-bottom:0.5rem;">404</h1>
+<p style="color:var(--text-secondary);margin-bottom:1.5rem;">${label("notFound.message")}</p>
+<a href="/" class="chip">${label("notFound.home")}</a>
+</div>`;
+  writeFileSync(join(dist, "404.html"), layout("404 — Not Found", content));
+  console.log("  Generated 404 page");
+}
+
 interface Stats {
   vtm: number;
   vmp: number;

@@ -53,6 +53,17 @@
   }
 })();
 
+// SAM version — injected from /version.json so it isn't baked into every page
+// (a SAM bump then changes one file, keeping incremental deploys small).
+(function () {
+  var el = document.getElementById('sam-version');
+  if (!el) return;
+  fetch('/version.json')
+    .then(function (r) { return r.json(); })
+    .then(function (d) { if (d && d.sam) el.textContent = ' v' + d.sam; })
+    .catch(function () {});
+})();
+
 // Listing-page filter (client-side, over rows already in the DOM)
 (function () {
   var input = document.getElementById('list-filter');

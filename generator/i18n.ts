@@ -5,6 +5,7 @@ const translations: Record<Lang, Record<string, string>> = {
   en: {
     "common.search": "Search", "common.showAll": "Show all", "common.showLess": "Show less",
     "common.searchAll": "Search all", "common.yes": "Yes", "common.no": "No",
+    "notFound.message": "Page not found", "notFound.home": "Back to search",
     "entityLabels.substance": "Substance", "entityLabels.generic": "Generic",
     "entityLabels.brand": "Brand", "entityLabels.package": "Package",
     "entityLabels.company": "Company", "entityLabels.group": "Group",
@@ -71,6 +72,7 @@ const translations: Record<Lang, Record<string, string>> = {
   nl: {
     "common.search": "Zoeken", "common.showAll": "Alles tonen", "common.showLess": "Minder tonen",
     "common.searchAll": "Alles zoeken", "common.yes": "Ja", "common.no": "Nee",
+    "notFound.message": "Pagina niet gevonden", "notFound.home": "Terug naar zoeken",
     "entityLabels.substance": "Stof", "entityLabels.generic": "Generiek",
     "entityLabels.brand": "Merk", "entityLabels.package": "Verpakking",
     "entityLabels.company": "Bedrijf", "entityLabels.group": "Groep",
@@ -137,6 +139,7 @@ const translations: Record<Lang, Record<string, string>> = {
   fr: {
     "common.search": "Rechercher", "common.showAll": "Afficher tout", "common.showLess": "Afficher moins",
     "common.searchAll": "Rechercher tout", "common.yes": "Oui", "common.no": "Non",
+    "notFound.message": "Page introuvable", "notFound.home": "Retour à la recherche",
     "entityLabels.substance": "Substance", "entityLabels.generic": "Générique",
     "entityLabels.brand": "Marque", "entityLabels.package": "Conditionnement",
     "entityLabels.company": "Entreprise", "entityLabels.group": "Groupe",
@@ -203,6 +206,7 @@ const translations: Record<Lang, Record<string, string>> = {
   de: {
     "common.search": "Suchen", "common.showAll": "Alle anzeigen", "common.showLess": "Weniger anzeigen",
     "common.searchAll": "Alle suchen", "common.yes": "Ja", "common.no": "Nein",
+    "notFound.message": "Seite nicht gefunden", "notFound.home": "Zurück zur Suche",
     "entityLabels.substance": "Substanz", "entityLabels.generic": "Generikum",
     "entityLabels.brand": "Marke", "entityLabels.package": "Packung",
     "entityLabels.company": "Unternehmen", "entityLabels.group": "Gruppe",

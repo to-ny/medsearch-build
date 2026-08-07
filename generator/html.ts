@@ -337,7 +337,7 @@ ${content}
 </main>
 <footer class="footer">
 <div class="container footer-inner">
-<div class="footer-left"><p>${label("footer.disclaimer")}</p><a href="https://www.famhp.be/en" target="_blank" rel="noopener noreferrer" class="sam-badge" title="SAM — Belgium's official medication database by FAMHP/AFMPS"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>Official SAM Data${process.env.SAM_VERSION ? ` v${process.env.SAM_VERSION}` : ""}</a></div>
+<div class="footer-left"><p>${label("footer.disclaimer")}</p><a href="https://www.famhp.be/en" target="_blank" rel="noopener noreferrer" class="sam-badge" title="SAM — Belgium's official medication database by FAMHP/AFMPS"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>Official SAM Data<span id="sam-version"></span></a></div>
 <p>Made with &#10084;&#65039; by <a href="https://to-ny.github.io/" target="_blank" rel="noopener noreferrer">to-ny</a></p>
 </div>
 </footer>

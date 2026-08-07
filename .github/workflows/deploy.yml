@@ -90,31 +90,18 @@ jobs:
           fi
           df -h /
 
-      - name: Deploy to medsearch
+      - name: Deploy to Bunny
+        env:
+          BUNNY_STORAGE_ZONE: ${{ secrets.BUNNY_STORAGE_ZONE }}
+          BUNNY_STORAGE_ENDPOINT: ${{ secrets.BUNNY_STORAGE_ENDPOINT }}
+          BUNNY_STORAGE_PASSWORD: ${{ secrets.BUNNY_STORAGE_PASSWORD }}
+          BUNNY_PULLZONE_ID: ${{ secrets.BUNNY_PULLZONE_ID }}
+          BUNNY_API_KEY: ${{ secrets.BUNNY_API_KEY }}
         run: |
-          # Shallow clone without checkout — we only need .git and README.md.
-          # The old site content is replaced wholesale, so checking out 2.6 GB
-          # of it only to delete it is wasted disk and time.
-          git clone --depth=1 --no-checkout https://x-access-token:${{ secrets.DEPLOY_TOKEN }}@github.com/to-ny/medsearch.git _public
-          cd _public
-          git checkout HEAD -- README.md
-          df -h .
-          # New site content straight from the Nix store into docs/ — a single
-          # copy (no /tmp intermediate). The store paths stay intact so
-          # cache-nix-action can save them in its post-job step.
-          mkdir -p docs
-          cp -rL "$GITHUB_WORKSPACE/result/." docs
-          chmod -R u+w docs
-          df -h .
-          git add -A
-          if git diff --cached --quiet; then
-            echo "No changes to deploy"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git commit -m "SAM v2 export v${{ steps.sam.outputs.version }}"
-          git push
+          # Incremental upload straight from the Nix store (no copy): diffs the
+          # built site against a manifest in the bucket and uploads only changed
+          # files, deletes removed ones, then purges the pull-zone cache.
+          nix develop --command bun scripts/deploy-bunny.ts "$GITHUB_WORKSPACE/result"
 
       - name: Commit SAM version bump back to build repo
         working-directory: ${{ github.workspace }}
