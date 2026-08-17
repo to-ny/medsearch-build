@@ -1,4 +1,5 @@
 import { tRaw, type Lang, LANGS } from "./i18n";
+import { hashedAsset } from "./assets";
 
 /** HTML-escape a string */
 export function esc(s: string | null | undefined): string {
@@ -307,7 +308,7 @@ export function layout(
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)} | MedSearch</title>
 <meta name="description" content="${esc(desc)}">
-<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="${hashedAsset("style.css")}">
 </head>
 <body>
 <header class="header">
@@ -341,7 +342,7 @@ ${content}
 <p>Made with &#10084;&#65039; by <a href="https://to-ny.github.io/" target="_blank" rel="noopener noreferrer">to-ny</a></p>
 </div>
 </footer>
-<script src="/lang.js"></script>
+<script src="${hashedAsset("lang.js")}"></script>
 </body>
 </html>`);
 }

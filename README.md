@@ -1,6 +1,6 @@
 # medsearch-build
 
-Private build repo for [MedSearch](https://medsearch.be) — a static site for Belgium's SAM v2 medication database.
+Build repo for [MedSearch](https://medsearch.be) — a static site for Belgium's SAM v2 medication database.
 
 ## Pipeline
 
@@ -17,12 +17,12 @@ Built entirely with [Nix](https://nixos.org/) — each step is a separate deriva
 nix build              # Full pipeline → result/
 nix build .#database   # SAM XML → SQLite
 nix build .#html       # SQLite → HTML + JSON indexes
-nix build .#site       # Merge html + static/ assets
+nix build .#site       # Package html output
 nix develop            # Dev shell (bun, curl, unzip)
 nix run .#update-sam   # Check for new SAM version
 ```
 
-Changing files in `static/` only rebuilds `.#site` (instant merge). Content changes rebuild `.#html`.
+Static assets are content-hashed into immutable URLs, so any change to `static/` regenerates all pages in `.#html`.
 
 ## Updating SAM data
 
@@ -36,6 +36,6 @@ Version and hash are pinned in `flake.nix`:
 ## Structure
 
 - `generator/` — Bun/TypeScript static HTML generator + search index builder
-- `scripts/` — SAM sync script + SQLite schema
-- `static/` — CSS, JS, MiniSearch (copied to output as-is)
+- `scripts/` — SAM sync script, SQLite schema, Bunny deploy script
+- `static/` — CSS, JS, MiniSearch
 - `flake.nix` — Nix build pipeline

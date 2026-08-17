@@ -9,6 +9,11 @@
  * lives in a single /version.json (not stamped into every page), a SAM bump
  * changes only the pages whose data actually changed, keeping deploys small.
  *
+ * Bunny Edge Storage serves the Cache-Control header sent on PUT, so browser
+ * caching is set here per file type (HTML/JSON revalidate via ETag → 304;
+ * assets cache for an hour). Asset URLs aren't content-hashed yet, so longer
+ * asset max-age would serve stale CSS/JS after a code change.
+ *
  * Usage: bun scripts/deploy-bunny.ts <site-dir> [--dry-run]
  * Env:   BUNNY_STORAGE_ZONE, BUNNY_STORAGE_ENDPOINT, BUNNY_STORAGE_PASSWORD,
  *        BUNNY_PULLZONE_ID, BUNNY_API_KEY
@@ -41,6 +46,10 @@ const API_KEY = env("BUNNY_API_KEY");
 
 const STORAGE = `https://${ENDPOINT}/${ZONE}`;
 const MANIFEST = ".deploy-manifest.json";
+// Bump to force a full re-upload (e.g. when per-file upload headers change and
+// existing objects must be re-PUT with the new Cache-Control).
+const MANIFEST_VERSION = "3";
+const MARKER = "$manifestVersion";
 const CONCURRENCY = 40;
 
 const MIME: Record<string, string> = {
@@ -57,6 +66,13 @@ const MIME: Record<string, string> = {
 };
 function contentType(path: string): string {
   return MIME[path.split(".").pop()!.toLowerCase()] || "application/octet-stream";
+}
+
+function cacheControl(path: string): string {
+  if (path.startsWith("assets/")) return "public, max-age=31536000, immutable";
+  const ext = path.split(".").pop()!.toLowerCase();
+  if (ext === "html" || ext === "json") return "no-cache";
+  return "public, max-age=3600";
 }
 
 /** Recursively list files, returning posix-relative paths. */
@@ -115,10 +131,14 @@ async function getManifest(): Promise<Record<string, string>> {
     return {};
   }
 }
-const remote = DRY ? {} : await getManifest();
+let remote = DRY ? {} : await getManifest();
+if (remote[MARKER] !== MANIFEST_VERSION) {
+  console.log("Manifest version changed — re-uploading all files with current headers");
+  remote = {};
+}
 
 const toUpload = Object.keys(local).filter((p) => local[p] !== remote[p]);
-const toDelete = Object.keys(remote).filter((p) => !(p in local));
+const toDelete = Object.keys(remote).filter((p) => p !== MARKER && !(p in local));
 console.log(
   `Plan: upload ${toUpload.length}, delete ${toDelete.length}, unchanged ${
     Object.keys(local).length - toUpload.length
@@ -139,7 +159,11 @@ if (toUpload.length) {
       () =>
         fetch(`${STORAGE}/${rel}`, {
           method: "PUT",
-          headers: { AccessKey: PASSWORD, "Content-Type": contentType(rel) },
+          headers: {
+            AccessKey: PASSWORD,
+            "Content-Type": contentType(rel),
+            "Cache-Control": cacheControl(rel),
+          },
           body,
         }),
       `PUT ${rel}`
@@ -165,7 +189,7 @@ await withRetry(
     fetch(`${STORAGE}/${MANIFEST}`, {
       method: "PUT",
       headers: { AccessKey: PASSWORD, "Content-Type": "application/json" },
-      body: JSON.stringify(local),
+      body: JSON.stringify({ ...local, [MARKER]: MANIFEST_VERSION }),
     }),
   "PUT manifest"
 );

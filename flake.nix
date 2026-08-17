@@ -39,7 +39,8 @@
             || pkgs.lib.hasPrefix (toString ./scripts) path;
         };
 
-        # Only generator + scripts — changes to static/ won't trigger html rebuild
+        # Generator + scripts. static/ enters via the ${./static} reference in
+        # the html derivation (its content hashes are stamped into every page).
         generatorSrc = pkgs.lib.cleanSourceWith {
           src = ./.;
           filter = path: type:
@@ -80,7 +81,10 @@
             installPhase = "cp $TMPDIR/medsearch.sqlite $out";
           };
 
-          # Step 2: SQLite → HTML pages + JSON search indexes (content only)
+          # Step 2: SQLite → HTML pages + JSON search indexes + fingerprinted
+          # static assets (content only). Static assets are part of this step
+          # because their content hashes are stamped into every page — a
+          # static/ change therefore rebuilds html (accepted trade-off).
           html = pkgs.stdenv.mkDerivation {
             name = "medsearch-html";
             src = generatorSrc;
@@ -88,26 +92,20 @@
             buildPhase = ''
               export HOME=$TMPDIR
               export DB_PATH=${self.packages.${system}.database}
-              export SKIP_STATIC=1
               export SAM_VERSION="${samVersion}"
               mkdir -p static
+              cp -r ${./static}/. static/
+              rm -f static/minisearch.min.js
+              cp ${minisearchJs} static/minisearch.min.js
               bun run generator/index.ts
             '';
             installPhase = "cp -r dist $out";
           };
 
-          # Step 3: Merge html + static assets (cheap — only rebuilds on static/ changes)
+          # Step 3: Package the html output (assets already merged in step 2)
           site = pkgs.runCommand "medsearch-site" {} ''
-            mkdir -p $out
-            cp -r ${self.packages.${system}.html}/* $out/
+            cp -r ${self.packages.${system}.html} $out
             chmod -R u+w $out
-            cp -r ${./static}/. $out/
-            # Overwrite the vendored minisearch.min.js with the SRI-pinned
-            # Nix fetchurl build, so the deployed bundle is byte-for-byte
-            # reproducible. `rm -f` first because cp -r from the nix store
-            # leaves the destination read-only.
-            rm -f $out/minisearch.min.js
-            cp ${minisearchJs} $out/minisearch.min.js
           '';
 
           default = self.packages.${system}.site;

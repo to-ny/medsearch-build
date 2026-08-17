@@ -1,6 +1,7 @@
 import { writeFileSync } from "fs";
 import { join } from "path";
 import { layout, label } from "../html";
+import { hashedAsset } from "../assets";
 
 export function generate404Page(dist: string) {
   const content = `
@@ -57,8 +58,8 @@ export function generateHomePage(dist: string, stats: Stats) {
 <div class="stat"><span class="stat-value">${stats.ampp.toLocaleString()}</span><span class="stat-label">${label("stats.packages")}</span></div>
 <div class="stat"><span class="stat-value">${stats.substance.toLocaleString()}</span><span class="stat-label">${label("stats.substances")}</span></div>
 </div>
-<script src="/minisearch.min.js"></script>
-<script src="/search.js"></script>
+<script src="${hashedAsset("minisearch.min.js")}"></script>
+<script src="${hashedAsset("search.js")}"></script>
 <script>window.addEventListener('DOMContentLoaded', initSearch);</script>`;
 
   writeFileSync(

@@ -17,4 +17,4 @@ Then read `/tmp/nix-build.log` when notified. Do NOT pipe through `tail` or poll
 - **Hierarchy:** VTM → VMP → AMP → AMPP (substance → generic → brand → package)
 - **CNK:** 7-digit Belgian pharmacy code
 - **Languages:** nl, fr, en, de (single-page with CSS toggle, MiniSearch per-type indexes)
-- **Deployed to:** [medsearch.be](https://medsearch.be) via GitHub Pages (public repo: to-ny/medsearch)
+- **Deployed to:** [medsearch.be](https://medsearch.be) via Bunny Edge Storage + CDN (incremental manifest-diff upload from CI, see `scripts/deploy-bunny.ts`)

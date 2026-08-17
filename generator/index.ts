@@ -1,6 +1,7 @@
 import { mkdirSync, cpSync, rmSync, writeFileSync } from "fs";
-import { join } from "path";
+import { join, relative } from "path";
 import { getDb, closeDb, queryOne } from "./db";
+import { fingerprintAssets, hashedAssetNames } from "./assets";
 import { generateVTMPages } from "./pages/vtm";
 import { generateVMPPages } from "./pages/vmp";
 import { generateAMPPages } from "./pages/amp";
@@ -17,6 +18,16 @@ import { generateSearchIndexes } from "./indexes";
 const DIST = join(import.meta.dir, "..", "dist");
 const STATIC = join(import.meta.dir, "..", "static");
 
+/** Copy static files as-is, except those replaced by fingerprinted copies. */
+function copyStatic() {
+  const skip = hashedAssetNames();
+  cpSync(STATIC, DIST, {
+    recursive: true,
+    filter: (src) => !skip.has(relative(STATIC, src).split(/[\\/]/).join("/")),
+  });
+  console.log("Copied static assets");
+}
+
 async function main() {
   const start = Date.now();
   console.log("MedSearch Static Site Generator");
@@ -24,10 +35,8 @@ async function main() {
 
   rmSync(DIST, { recursive: true, force: true });
   mkdirSync(DIST, { recursive: true });
-  if (process.env.SKIP_STATIC !== "1") {
-    cpSync(STATIC, DIST, { recursive: true });
-    console.log("Copied static assets");
-  }
+  fingerprintAssets(DIST);
+  copyStatic();
 
   // SAM version lives in this single file (not stamped into every page's
   // footer), so a SAM bump changes one file and incremental deploys stay small.
