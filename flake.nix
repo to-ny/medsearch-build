@@ -12,8 +12,8 @@
         pkgs = nixpkgs.legacyPackages.${system};
 
         # SAM v2 export — update these when a new version is published
-        samVersion = "12555";
-        samHash = "sha256-y8MV9ZkFHsSU3F1w4MOh+Po3hlqBqWD+jgl0oHmEDUo=";
+        samVersion = "12567";
+        samHash = "sha256-d9n0o1D1UofpPMV5QZg2f4PCDaOKutKJcTIQNoYCtGo=";
 
         samExport = pkgs.fetchzip {
           url = "https://www.vas.ehealth.fgov.be/websamcivics/samcivics/download/samv2-download?type=FULL&xsd=5&version=${samVersion}";
